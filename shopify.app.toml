@@ -40,13 +40,5 @@ required = true
 name = "Show on FAQ page"
 type = "boolean"
 
-[product.metafields.app.faq]
-name = "FAQ"
-description = "FAQ for this product"
-type = "metaobject_reference<$app:faq>"
-
-  [product.metafields.app.faq.access]
-  admin = "merchant_read_write"
-
 [sidekick]
 extensions_summary = "Read FAQ entries stored in the app"
