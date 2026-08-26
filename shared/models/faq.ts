@@ -1,4 +1,4 @@
-import { gidToId, idToGid } from "../utils/gid";
+import { idToGid } from "../utils/gid";
 
 export interface FAQ {
   question: string;
@@ -7,23 +7,6 @@ export interface FAQ {
 }
 
 export type FAQSummary = FAQ & { id: string };
-
-export const EMPTY_FAQ: FAQ = {
-  question: "",
-  answer: "",
-  show_on_faq_page: true,
-};
-
-const primedFAQs = new Map<string, FAQ>();
-
-export function primeFAQ(id: string, faq: FAQ) {
-  primedFAQs.set(id, { ...faq });
-}
-
-export function getPrimedFAQ(id: string): FAQ | null {
-  const faq = primedFAQs.get(id);
-  return faq ? { ...faq } : null;
-}
 
 function gqlFetch(query: string, variables?: Record<string, unknown>) {
   return fetch("shopify:admin/api/2026-07/graphql.json", {
@@ -54,7 +37,6 @@ export async function fetchFAQ(id: string): Promise<FAQ> {
   );
 
   const faq = fromValues(json.data.metaobject.values);
-  primeFAQ(id, faq);
   return faq;
 }
 
@@ -84,58 +66,5 @@ export async function listFAQs(): Promise<FAQSummary[]> {
     }),
   );
 
-  for (const { id, ...faq } of faqs) {
-    primeFAQ(gidToId(id), faq);
-  }
-
   return faqs;
-}
-
-export async function createFAQ(faq: FAQ): Promise<string> {
-  const json = await gqlFetch(
-    `#graphql
-    mutation CreateMetaobject($metaobject: MetaobjectCreateInput!) {
-      metaobjectCreate(metaobject: $metaobject) {
-        metaobject { id }
-      }
-    }`,
-    {
-      metaobject: {
-        type: "$app:faq",
-        values: faq,
-      },
-    },
-  );
-  return json.data.metaobjectCreate.metaobject.id;
-}
-
-export async function updateFAQ(
-  id: string,
-  faq: FAQ,
-): Promise<void> {
-  await gqlFetch(
-    `#graphql
-    mutation UpdateMetaobject($id: ID!, $metaobject: MetaobjectUpdateInput!) {
-      metaobjectUpdate(id: $id, metaobject: $metaobject) {
-        metaobject { id }
-      }
-    }`,
-    {
-      id: idToGid(id),
-      metaobject: { values: faq },
-    },
-  );
-  primeFAQ(id, faq);
-}
-
-export async function deleteFAQ(id: string): Promise<void> {
-  await gqlFetch(
-    `#graphql
-    mutation DeleteMetaobject($id: ID!) {
-      metaobjectDelete(id: $id) {
-        deletedId
-      }
-    }`,
-    { id: idToGid(id) },
-  );
 }
