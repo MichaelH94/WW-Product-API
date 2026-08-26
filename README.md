@@ -90,13 +90,13 @@ This template is configured with the Shopify Dev MCP. This instructs [Cursor](ht
 
 For more information on the Shopify Dev MCP please read [the documentation](https://shopify.dev/docs/apps/build/devmcp).
 
-## Metafields and Metaobjects
+## Metaobjects
 
-This template uses [metaobjects](https://shopify.dev/docs/apps/custom-data/metaobjects) and [metafields](https://shopify.dev/docs/apps/custom-data/metafields) to store structured app data without a custom database.
+This template uses [metaobjects](https://shopify.dev/docs/apps/custom-data/metaobjects) to store structured app data without a custom database.
 
 ### Metaobject: FAQ
 
-The template defines a `faq` metaobject type for storing FAQ entries. Each FAQ has a question, answer, a flag to control visibility on the FAQ page, and optional product associations.
+The template defines a `faq` metaobject type for storing FAQ entries. Each FAQ has a question, answer, and a flag to control visibility on the FAQ page.
 
 Defined in `shopify.app.toml`:
 
@@ -117,25 +117,9 @@ required = true
 [metaobjects.app.faq.fields.show_on_faq_page]
 name = "Show on FAQ page"
 type = "boolean"
-
-[metaobjects.app.faq.fields.products]
-name = "Products"
-type = "list.product_reference"
 ```
 
-### Metafield: Product FAQ
-
-A metafield definition links individual products to a FAQ metaobject entry, allowing merchants to associate a FAQ with specific products.
-
-```toml
-[product.metafields.app.faq]
-name = "FAQ"
-description = "FAQ for this product"
-type = "metaobject_reference<$app:faq>"
-access.admin = "merchant_read_write"
-```
-
-These definitions are automatically synced to Shopify when you run `shopify app dev` or `shopify app deploy`. See [/shared/models/faq.ts](./shared/models/faq.ts) for the client-side model that reads and writes these metaobjects via the Admin GraphQL API.
+This definition is automatically synced to Shopify when you run `shopify app dev` or `shopify app deploy`. See [/shared/models/faq.ts](./shared/models/faq.ts) for the client-side model that reads these metaobjects via the Admin GraphQL API.
 
 ## Resources
 
