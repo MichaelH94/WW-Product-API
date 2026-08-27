@@ -3,6 +3,8 @@ import test from "node:test";
 
 import { ShopifyAdminResponseError } from "../../shared/shopify/admin.ts";
 import {
+  EXACT_LOOKUP_INVENTORY_LEVEL_LIMIT,
+  EXACT_VARIANT_LOOKUP_LIMIT,
   GET_INVENTORY_FOR_VARIANT_QUERY,
   LOOKUP_PRODUCT_VARIANTS_QUERY,
   buildGetProductByIdQuery,
@@ -203,11 +205,13 @@ test("combines normalized free-text, vendor, and product-type search filters", a
   );
 });
 
-test("SKU and barcode lookups return every matching variant with its product", async () => {
+test("EV1-LE and SAMF180 exact SKU lookups return inventory in one query", async () => {
   const searches: string[] = [];
-  const api = createProductDataAccess(async <T>(_query: string, input = {}) => {
+  const documents: string[] = [];
+  const api = createProductDataAccess(async <T>(query: string, input = {}) => {
+    documents.push(query);
     searches.push(String(input.query));
-    const item = variant();
+    const item = {...variant(), sku: String(input.query).includes("EV1-LE") ? "EV1-LE" : "SAMF180"};
     return {
       productVariants: {
         nodes: [{ ...item, product: product() }],
@@ -216,16 +220,79 @@ test("SKU and barcode lookups return every matching variant with its product", a
     } as T;
   });
 
-  const bySku = await api.getProductBySku("SKU-001");
-  const byBarcode = await api.getProductByBarcode("0123456789012");
+  const ev1 = await api.getProductBySku("EV1-LE");
+  const samf = await api.getProductBySku("SAMF180");
 
   assert.deepEqual(searches, [
-    'sku:"SKU-001"',
-    'barcode:"0123456789012"',
+    'sku:"EV1-LE"',
+    'sku:"SAMF180"',
   ]);
-  assert.equal(bySku[0]?.product.id, "gid://shopify/Product/10");
-  assert.equal(byBarcode[0]?.variant.barcode, "0123456789012");
-  assert.doesNotMatch(LOOKUP_PRODUCT_VARIANTS_QUERY, /inventoryLevels/);
+  assert.equal(ev1.state, "found_with_inventory");
+  assert.equal(ev1.matches[0]?.variant.sku, "EV1-LE");
+  assert.equal(samf.matches[0]?.variant.sku, "SAMF180");
+  assert.equal(samf.matches[0]?.product.id, "gid://shopify/Product/10");
+  assert.equal(samf.matches[0]?.variant.inventoryItem?.levels[0]?.available, 7);
+  assert.equal(documents.length, 2);
+  assert.match(LOOKUP_PRODUCT_VARIANTS_QUERY, /inventoryLevels/);
+});
+
+test("exact barcode lookup preserves leading zeroes and location quantities", async () => {
+  const api = createProductDataAccess(async <T>() => ({
+    productVariants: {
+      nodes: [{...variant(), product: product()}],
+      pageInfo,
+    },
+  }) as T);
+
+  const result = await api.getProductByBarcode("0123456789012");
+
+  assert.equal(result.state, "found_with_inventory");
+  assert.equal(result.matches[0]?.variant.barcode, "0123456789012");
+  assert.deepEqual(result.matches[0]?.variant.inventoryItem?.levels[0], {
+    id: "gid://shopify/InventoryLevel/40?inventory_item_id=30",
+    location: {id: "gid://shopify/Location/50", name: "Main"},
+    available: 7,
+    on_hand: 9,
+    incoming: 2,
+  });
+});
+
+test("exact lookup distinguishes zero, untracked, empty, missing, and duplicate results", async () => {
+  const responses = [
+    [{...variant(), inventoryItem: {
+      ...inventoryItem(),
+      inventoryLevels: {
+        nodes: [{...inventoryItem().inventoryLevels.nodes[0], quantities: [
+          {name: "available", quantity: 0},
+          {name: "on_hand", quantity: 0},
+          {name: "incoming", quantity: 0},
+        ]}],
+        pageInfo,
+      },
+    }, product: product()}],
+    [{...variant(), inventoryItem: {...inventoryItem(), tracked: false}, product: product()}],
+    [{...variant(), inventoryItem: {...inventoryItem(), inventoryLevels: {nodes: [], pageInfo}}, product: product()}],
+    [],
+    [
+      {...variant(), id: "gid://shopify/ProductVariant/20", product: product()},
+      {...variant(), id: "gid://shopify/ProductVariant/21", product: {...product(), id: "gid://shopify/Product/11"}},
+    ],
+  ];
+  const api = createProductDataAccess(async <T>() => ({
+    productVariants: {nodes: responses.shift(), pageInfo},
+  }) as T);
+
+  assert.equal((await api.getProductBySku("ZERO")).state, "found_zero_inventory");
+  assert.equal((await api.getProductBySku("UNTRACKED")).state, "inventory_not_tracked");
+  assert.equal((await api.getProductBySku("EMPTY")).state, "no_inventory_levels");
+  assert.equal((await api.getProductBySku("MISSING")).state, "product_not_found");
+  const duplicate = await api.getProductBySku("DUPLICATE");
+  assert.equal(duplicate.state, "ambiguous");
+  assert.equal(duplicate.matchCount, 2);
+  assert.deepEqual(duplicate.matches.map(({variant}) => variant.id), [
+    "gid://shopify/ProductVariant/20",
+    "gid://shopify/ProductVariant/21",
+  ]);
 });
 
 test("gets inventory by numeric variant ID and returns null when absent", async () => {
@@ -327,6 +394,18 @@ test("uses conservative connection limits for search, detail, and inventory", ()
     /quantities\(names: \["available", "on_hand", "incoming"\]\)/,
   );
   assert.doesNotMatch(GET_INVENTORY_FOR_VARIANT_QUERY, /\n\s+available\s*\n/);
+  assert.match(
+    LOOKUP_PRODUCT_VARIANTS_QUERY,
+    new RegExp(`productVariants\\(first: ${EXACT_VARIANT_LOOKUP_LIMIT}, query: \\$query\\)`),
+  );
+  assert.match(
+    LOOKUP_PRODUCT_VARIANTS_QUERY,
+    new RegExp(`inventoryLevels\\(first: ${EXACT_LOOKUP_INVENTORY_LEVEL_LIMIT}, includeInactive: true\\)`),
+  );
+  assert.match(
+    LOOKUP_PRODUCT_VARIANTS_QUERY,
+    /quantities\(names: \["available", "on_hand", "incoming"\]\)/,
+  );
 });
 
 test("recognizes only a confirmed partner development store", async () => {

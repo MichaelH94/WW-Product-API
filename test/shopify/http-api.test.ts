@@ -33,13 +33,19 @@ function product(id = "gid://shopify/Product/1") {
 }
 
 function dataAccess(overrides: Partial<ProductApiDataAccess> = {}): ProductApiDataAccess {
+  const missingExactLookup = {
+    state: "product_not_found" as const,
+    matchCount: 0,
+    hasAdditionalMatches: false,
+    matches: [],
+  };
   return {
     searchProducts: async () => ({
       products: [product()],
       pageInfo: {hasNextPage: false, endCursor: null},
     }),
-    getProductBySku: async () => [],
-    getProductByBarcode: async () => [],
+    getProductBySku: async () => missingExactLookup,
+    getProductByBarcode: async () => missingExactLookup,
     getProductById: async () => product(),
     getInventoryForVariant: async () => null,
     ...overrides,
@@ -170,8 +176,14 @@ test("search defaults to 10 and validates opaque pagination cursors", async () =
 test("routes normalized SKU, barcode, and product IDs", async () => {
   const calls: string[] = [];
   const access = dataAccess({
-    getProductBySku: async (value) => { calls.push(`sku:${value}`); return []; },
-    getProductByBarcode: async (value) => { calls.push(`barcode:${value}`); return []; },
+    getProductBySku: async (value) => {
+      calls.push(`sku:${value}`);
+      return {state: "product_not_found", matchCount: 0, hasAdditionalMatches: false, matches: []};
+    },
+    getProductByBarcode: async (value) => {
+      calls.push(`barcode:${value}`);
+      return {state: "product_not_found", matchCount: 0, hasAdditionalMatches: false, matches: []};
+    },
     getProductById: async (value) => { calls.push(`id:${value}`); return product(); },
   });
 

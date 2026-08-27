@@ -162,6 +162,52 @@ test("Worker enables cost diagnostics only when requested and never returns them
   assert.doesNotMatch(body, /requestedQueryCost|requestedTotalCost|fields/);
 });
 
+test("exact SKU lookup records requested and actual cost without exposing it", async () => {
+  let graphqlRequests = 0;
+  let observedCost: Record<string, unknown> | undefined;
+  const handler = createWorkerHandler({
+    onCostDebug: (cost) => {
+      observedCost = cost;
+    },
+    fetcher: async (url, init) => {
+      if (url.endsWith("/admin/oauth/access_token")) {
+        return Response.json({access_token: "server-only-token", expires_in: 86399});
+      }
+      graphqlRequests += 1;
+      const body = JSON.parse(String(init?.body));
+      assert.match(body.query, /^query LookupProductVariantInventory/);
+      assert.deepEqual(body.variables, {query: 'sku:"SAMF180"'});
+      return Response.json({
+        data: {
+          productVariants: {
+            nodes: [],
+            pageInfo: {hasNextPage: false},
+          },
+        },
+        extensions: {
+          cost: {
+            requestedQueryCost: 22,
+            actualQueryCost: 3,
+            throttleStatus: {currentlyAvailable: 19997, restoreRate: 1000},
+          },
+        },
+      });
+    },
+  });
+
+  const response = await handler(
+    request("/api/products/by-sku/SAMF180"),
+    {...ENVIRONMENT, SHOPIFY_GRAPHQL_COST_DEBUG: "1"},
+  );
+  const body = JSON.stringify(await response.json());
+
+  assert.equal(response.status, 200);
+  assert.equal(graphqlRequests, 1);
+  assert.equal(observedCost?.requestedQueryCost, 22);
+  assert.equal(observedCost?.actualQueryCost, 3);
+  assert.doesNotMatch(body, /requestedQueryCost|actualQueryCost|throttleStatus/);
+});
+
 test("Worker exposes authenticated read-only inventory by variant and location", async () => {
   const handler = createWorkerHandler({
     fetcher: async (url, init) => {

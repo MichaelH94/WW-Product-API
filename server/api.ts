@@ -8,10 +8,10 @@ import {
   type ShopifyRequestContext,
 } from "../shared/shopify/admin.ts";
 import type {
+  ExactVariantLookupResult,
   InventoryForVariant,
   Product,
   ProductSearchResult,
-  VariantLookupResult,
 } from "../shared/shopify/index.ts";
 
 export interface ProductApiDataAccess {
@@ -25,11 +25,11 @@ export interface ProductApiDataAccess {
   getProductBySku(
     sku: string,
     context?: ShopifyRequestContext,
-  ): Promise<VariantLookupResult[]>;
+  ): Promise<ExactVariantLookupResult>;
   getProductByBarcode(
     barcode: string,
     context?: ShopifyRequestContext,
-  ): Promise<VariantLookupResult[]>;
+  ): Promise<ExactVariantLookupResult>;
   getProductById(
     id: string,
     options?: {metafields?: ReadonlyArray<{namespace: string; key: string}>},

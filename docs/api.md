@@ -57,13 +57,18 @@ Example: `/api/products/search?q=blue%20shirt&vendor=Acme&limit=10`
 
 ### `GET /api/products/by-sku/:sku`
 
-Returns every matching variant and its parent product because SKUs aren't
-guaranteed to be unique.
+Performs one narrowly bounded Shopify `productVariants` query for the exact SKU
+and returns product details, variant details, inventory tracking, and exact
+`available`, `on_hand`, and `incoming` quantities for up to 20 locations.
+The result includes `state`, `matchCount`, `hasAdditionalMatches`, and `matches`.
+If multiple variants match, `state` is `ambiguous`; callers must use the
+returned product and variant IDs to distinguish them rather than choosing one.
 
 ### `GET /api/products/by-barcode/:barcode`
 
-Returns every matching variant and its parent product because barcodes aren't
-guaranteed to be unique.
+Provides the same single-query, inventory-enriched response as exact SKU lookup.
+Barcode strings are preserved exactly, including leading zeroes. Duplicate
+barcodes return `state: ambiguous` with distinguishing identifiers.
 
 ### `GET /api/products/:id`
 
@@ -86,9 +91,10 @@ Shopify's 2026-07 schema requires `read_products`, `read_inventory`, and
 `read_locations` for product inventory. Selecting any `Location.address` field
 also requires the read-only `read_markets_home` scope. No write scope is used.
 
-Broad search and exact SKU/barcode lookup return lightweight inventory-item
-identifiers only. Use this endpoint after identifying the variant when complete
-inventory-by-location data is needed.
+Broad search remains lightweight and does not return inventory levels. Exact SKU
+and barcode lookups include inventory immediately. Use the variant inventory
+endpoint when paginating more than 20 locations or refreshing inventory for a
+known variant ID.
 
 No mutation or product write routes exist. POST, PUT, PATCH, and DELETE return
 `405 METHOD_NOT_ALLOWED`.
@@ -100,3 +106,7 @@ wait before retrying. Safe read requests retry transient network, HTTP, and
 Shopify GraphQL failures up to three total attempts using jittered exponential
 backoff. Diagnostic details contain only safe status, retryability, result
 state, and this API's request ID; Shopify request IDs stay in internal logs.
+
+Set `SHOPIFY_GRAPHQL_COST_DEBUG=1` only during local development or testing to
+record requested cost, actual cost, and throttle capacity in internal logs.
+Cost diagnostics are never included in API responses.

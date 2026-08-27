@@ -1,140 +1,97 @@
-# Shopify App Template - Extension Only
+# WW Product API
 
-This is a template for building a [Shopify app](https://shopify.dev/docs/apps/getting-started) using [Preact](https://preactjs.com/) and [Vite](https://vite.dev/). It uses Shopify's [Direct API access](https://shopify.dev/docs/api/app-home#direct-api-access) and [App Bridge](https://shopify.dev/docs/api/app-bridge) to make authenticated calls to the Shopify Admin API directly from the browser — no server required.
+WW Product API is a private, read-only service that gives authorized tools access to Shopify product, variant, and inventory data. It is designed for use by a Custom GPT and other trusted internal clients.
 
-Rather than cloning this repo, follow the [Quick Start steps](#quick-start) below.
+## Architecture
 
-## Quick start
-
-### Prerequisites
-
-Before you begin, you'll need to [download and install the Shopify CLI](https://shopify.dev/docs/apps/tools/cli/getting-started) if you haven't already.
-
-### Setup
-
-```shell
-shopify app init --template=https://github.com/Shopify/shopify-app-template-extension-only
+```text
+Custom GPT or trusted client
+  -> Bearer-authenticated HTTPS API
+  -> Cloudflare Worker
+  -> Shopify Admin GraphQL API
 ```
 
-### Local Development
+The Worker obtains Shopify access tokens server-side through the client credentials grant. Shopify credentials and access tokens are never sent to API clients. The service exposes only `GET` routes and contains no Shopify mutations.
+
+## Supported operations
+
+- Search products by text, vendor, or product type.
+- Find variants by exact SKU or barcode with inventory returned immediately.
+- Retrieve product and variant details.
+- Retrieve tracked inventory quantities by location.
+- Check service health and the configured Shopify API version.
+
+The Custom GPT contract is defined in [`docs/openapi.yaml`](docs/openapi.yaml). Detailed response and pagination guidance is available in [`docs/api.md`](docs/api.md).
+
+## Required configuration
+
+Configure these values as server-side environment variables or Cloudflare Worker secrets:
+
+- `SHOPIFY_SHOP`: Shopify store hostname, such as `store.myshopify.com`.
+- `SHOPIFY_CLIENT_ID`: Shopify app client ID.
+- `SHOPIFY_CLIENT_SECRET`: Shopify app client secret.
+- `INTERNAL_API_KEY`: Random bearer key of at least 32 characters for API clients.
+
+Never place these values in source code, browser code, the OpenAPI document, or committed environment files. Use [`.dev.vars.example`](.dev.vars.example) and [`.env.example`](.env.example) only as placeholder templates.
+
+The Shopify app must remain read-only. Its product and inventory access uses `read_products`, `read_inventory`, and `read_locations`; no `write_*` scope is permitted.
+
+## Local Worker development
+
+Requirements: Node.js, npm, a Shopify app configured for the target store, and a Cloudflare account for deployment.
+
+1. Install dependencies:
+
+   ```shell
+   npm install
+   ```
+
+2. Copy `.dev.vars.example` to `.dev.vars` and replace its placeholders locally. Do not commit `.dev.vars`.
+
+3. Start the Worker:
+
+   ```shell
+   npm run dev:worker
+   ```
+
+4. Call an endpoint with the configured API key:
+
+   ```shell
+   curl -H "Authorization: Bearer YOUR_INTERNAL_API_KEY" \
+     "http://localhost:8787/api/products/search?q=snowboards"
+   ```
+
+## Validation
+
+Run the complete automated test suite and builds before deployment:
 
 ```shell
-shopify app dev
-```
-
-Press P to open the URL to your app. Once you click install, you can start development.
-
-Local development is powered by [Shopify CLI](https://shopify.dev/docs/apps/build/cli-for-apps/test-apps-locally). It logs into your account, connects to an app, provides environment variables, updates remote config, creates a tunnel and provides commands to generate extensions.
-
-## How it works
-
-### Authentication
-
-This template uses [Shopify managed installation](https://shopify.dev/docs/apps/build/authentication-authorization/app-installation). Shopify handles the OAuth flow and app installation automatically. Once installed, the app is fully embedded in the Shopify Admin.
-
-### Querying data
-
-This template uses [Direct API access](https://shopify.dev/docs/api/app-home#direct-api-access) — the Shopify Admin API is called directly from the browser using App Bridge. No server-side code is needed.
-
-This template comes pre-configured with examples of querying data using GraphQL with direct API access, and using [metaobjects](https://shopify.dev/docs/apps/custom-data/metaobjects) to store and retrieve structured app data — see [/shared/models/faq.ts](./shared/models/faq.ts).
-
-### App Bridge
-
-[App Bridge](https://shopify.dev/docs/api/app-bridge) is loaded automatically in embedded apps.
-
-### Polaris Web Components
-
-This template uses [Polaris Web Components](https://shopify.dev/docs/api/app-home/web-components) — the native custom element version of Polaris that works in any framework (including Preact). No additional package installation is required as they are provided automatically in the Shopify Admin iframe.
-
-## GraphQL Codegen
-
-This template is pre-configured with [GraphQL Codegen](https://the-guild.dev/graphql/codegen) to generate TypeScript types from your GraphQL queries.
-
-To regenerate types after updating queries:
-
-```shell
-npm run codegen
-```
-
-To watch for changes:
-
-```shell
-npm run codegen:watch
-```
-
-## Build
-
-Build the app by running:
-
-Using npm:
-
-```shell
+npm test
 npm run build
+npm run build:api
+npm run build:worker
 ```
 
-Using yarn:
+Validate the OpenAPI document when it changes:
 
 ```shell
-yarn build
+npx --yes @redocly/cli lint docs/openapi.yaml
 ```
 
-Using pnpm:
+## Deployment
+
+Provision the four required values as Cloudflare Worker secrets, then deploy:
 
 ```shell
-pnpm run build
+npm run deploy:worker
 ```
 
-## Shopify Dev MCP
+Wrangler configuration is stored in [`wrangler.jsonc`](wrangler.jsonc). It contains binding names only and must never contain credential values. See [`docs/cloudflare-worker.md`](docs/cloudflare-worker.md) for production setup and secret-management instructions.
 
-This template is configured with the Shopify Dev MCP. This instructs [Cursor](https://cursor.com/), [GitHub Copilot](https://github.com/features/copilot), [Claude Code](https://claude.com/product/claude-code), and [Google Gemini CLI](https://github.com/google-gemini/gemini-cli) to use the Shopify Dev MCP.
+## Security expectations
 
-For more information on the Shopify Dev MCP please read [the documentation](https://shopify.dev/docs/apps/build/devmcp).
-
-## Metaobjects
-
-This template uses [metaobjects](https://shopify.dev/docs/apps/custom-data/metaobjects) to store structured app data without a custom database.
-
-### Metaobject: FAQ
-
-The template defines a `faq` metaobject type for storing FAQ entries. Each FAQ has a question, answer, and a flag to control visibility on the FAQ page.
-
-Defined in `shopify.app.toml`:
-
-```toml
-[metaobjects.app.faq]
-name = "FAQ"
-
-[metaobjects.app.faq.fields.question]
-name = "Question"
-type = "single_line_text_field"
-required = true
-
-[metaobjects.app.faq.fields.answer]
-name = "Answer"
-type = "multi_line_text_field"
-required = true
-
-[metaobjects.app.faq.fields.show_on_faq_page]
-name = "Show on FAQ page"
-type = "boolean"
-```
-
-This definition is automatically synced to Shopify when you run `shopify app dev` or `shopify app deploy`. See [/shared/models/faq.ts](./shared/models/faq.ts) for the client-side model that reads these metaobjects via the Admin GraphQL API.
-
-## Resources
-
-Preact & Vite:
-
-- [Preact docs](https://preactjs.com/guide/v10/getting-started)
-- [Vite docs](https://vite.dev/)
-
-Shopify:
-
-- [Intro to Shopify apps](https://shopify.dev/docs/apps/getting-started)
-- [Direct API access](https://shopify.dev/docs/api/app-home#direct-api-access)
-- [Shopify CLI](https://shopify.dev/docs/apps/tools/cli)
-- [App Bridge](https://shopify.dev/docs/api/app-bridge)
-- [Polaris Web Components](https://shopify.dev/docs/api/app-home/web-components)
-- [Metaobjects](https://shopify.dev/docs/apps/custom-data/metaobjects)
-- [App extensions](https://shopify.dev/docs/apps/app-extensions/list)
-- [Shopify Functions](https://shopify.dev/docs/api/functions)
+- Send `Authorization: Bearer <INTERNAL_API_KEY>` with every API request.
+- Keep Shopify permissions strictly read-only.
+- Do not add mutation operations or write-capable HTTP routes.
+- Keep broad searches lightweight; request detailed inventory only after identifying a product or variant.
+- Treat response request IDs as diagnostic correlation values, not credentials.

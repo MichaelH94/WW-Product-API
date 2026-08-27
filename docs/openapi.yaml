@@ -54,11 +54,10 @@ paths:
       operationId: searchProducts
       summary: Search products
       description: >-
-        Use for discovery by title or free text, vendor, product type, or
-        combined filters. If an exact SKU or barcode is known, use its exact
-        lookup. Supply q, vendor, or productType. Pass pageInfo.endCursor
-        unchanged as after for the next page. Use product detail for product
-        context, then variant inventory for paginated quantities by location.
+        Find products by title or free text, vendor, product type, or combined
+        filters. Use the exact SKU or barcode operation when known. Pass
+        pageInfo.endCursor unchanged as after for another page, then use a
+        returned ID for product details or variant inventory.
       parameters:
         - name: q
           in: query
@@ -133,10 +132,10 @@ paths:
       operationId: findProductsBySku
       summary: Find variants by SKU
       description: >-
-        Use when an exact SKU is known. Returns lightweight matching variants
-        and parent product IDs. Use the returned variant ID with variant
-        inventory when quantities by location are needed. SKUs are not unique,
-        so data is always an array. An empty array means no match.
+        Use when an exact SKU is known. Returns product and variant details
+        with inventory quantities by location in one call. Inspect state before
+        using matches: product_not_found means none, and ambiguous means the SKU
+        matched multiple variants.
       parameters:
         - name: sku
           in: path
@@ -148,11 +147,11 @@ paths:
             maxLength: 100
       responses:
         '200':
-          description: Matching variants and their parent products, or an empty data array.
+          description: Exact SKU result with inventory, ambiguity metadata, and matching identifiers.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VariantLookupResponse'
+                $ref: '#/components/schemas/ExactVariantLookupResponse'
         '400':
           $ref: '#/components/responses/InvalidInput'
         '401':
@@ -173,10 +172,10 @@ paths:
       operationId: findProductsByBarcode
       summary: Find variants by barcode
       description: >-
-        Use when an exact barcode is known. Returns lightweight matching
-        variants and parent product IDs. Preserve leading zeroes, then use the
-        returned variant ID with variant inventory for quantities by location.
-        Barcodes are not unique. An empty array means no match.
+        Use when an exact barcode is known. Preserve leading zeroes. Returns
+        product and variant details with inventory by location in one call.
+        Inspect state before using matches: product_not_found means none, and
+        ambiguous means multiple variants matched.
       parameters:
         - name: barcode
           in: path
@@ -188,11 +187,11 @@ paths:
             maxLength: 100
       responses:
         '200':
-          description: Matching variants and their parent products, or an empty data array.
+          description: Exact barcode result with inventory, ambiguity metadata, and matching identifiers.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VariantLookupResponse'
+                $ref: '#/components/schemas/ExactVariantLookupResponse'
         '400':
           $ref: '#/components/responses/InvalidInput'
         '401':
@@ -481,28 +480,6 @@ components:
           type: string
         value:
           description: Parsed Shopify metafield JSON value. Its type depends on the metafield definition.
-    ProductSummary:
-      type: object
-      additionalProperties: false
-      required: [id, title, handle, status, vendor, productType, tags]
-      properties:
-        id:
-          type: string
-          description: Shopify Product GID retained for follow-up calls.
-        title:
-          type: string
-        handle:
-          type: string
-        status:
-          type: string
-        vendor:
-          type: string
-        productType:
-          type: string
-        tags:
-          type: array
-          items:
-            type: string
     Product:
       type: object
       additionalProperties: false
@@ -545,15 +522,140 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ProductMetafield'
-    VariantLookupResult:
+    ExactVariantLookupMatch:
       type: object
       additionalProperties: false
-      required: [product, variant]
+      required: [product, variant, inventoryState]
       properties:
         product:
-          $ref: '#/components/schemas/ProductSummary'
+          $ref: '#/components/schemas/ExactLookupProduct'
         variant:
-          $ref: '#/components/schemas/ProductVariant'
+          $ref: '#/components/schemas/ExactLookupVariant'
+        inventoryState:
+          $ref: '#/components/schemas/InventoryResultState'
+    ExactLookupProduct:
+      type: object
+      additionalProperties: false
+      required: [id, title, status, vendor, productType]
+      properties:
+        id:
+          type: string
+          description: Shopify Product GID retained for follow-up calls.
+        title:
+          type: string
+        status:
+          type: string
+        vendor:
+          type: string
+        productType:
+          type: string
+    ExactLookupLocation:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          description: Shopify Location GID.
+        name:
+          type: string
+    ExactLookupInventoryLevel:
+      type: object
+      additionalProperties: false
+      required: [id, location, available, on_hand, incoming]
+      properties:
+        id:
+          type: string
+          description: Shopify InventoryLevel ID.
+        location:
+          $ref: '#/components/schemas/ExactLookupLocation'
+        available:
+          type: [integer, 'null']
+          description: Exact available quantity, or null if Shopify omitted this state.
+        on_hand:
+          type: [integer, 'null']
+          description: Exact on-hand quantity, or null if Shopify omitted this state.
+        incoming:
+          type: [integer, 'null']
+          description: Exact incoming quantity, or null if Shopify omitted this state.
+    ExactLookupInventoryItem:
+      type: object
+      additionalProperties: false
+      required: [id, tracked, levels, pageInfo]
+      properties:
+        id:
+          type: string
+          description: Shopify InventoryItem GID.
+        tracked:
+          type: boolean
+          description: Whether Shopify tracks inventory for this variant.
+        levels:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/ExactLookupInventoryLevel'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+    ExactLookupVariant:
+      type: object
+      additionalProperties: false
+      required: [id, title, sku, barcode, price, inventoryItem]
+      properties:
+        id:
+          type: string
+          description: Shopify ProductVariant GID.
+        title:
+          type: string
+        sku:
+          type: [string, 'null']
+          description: Exact SKU returned by Shopify, including punctuation and leading zeroes.
+        barcode:
+          type: [string, 'null']
+          description: Exact barcode returned by Shopify, including leading zeroes.
+        price:
+          type: string
+          description: Exact decimal price string returned by Shopify.
+        inventoryItem:
+          description: Inventory data, or null when no inventory item is accessible.
+          anyOf:
+            - $ref: '#/components/schemas/ExactLookupInventoryItem'
+            - type: 'null'
+    InventoryResultState:
+      type: string
+      enum:
+        - found_with_inventory
+        - found_zero_inventory
+        - inventory_not_tracked
+        - no_inventory_levels
+      description: Inventory outcome for one exact variant match.
+    ExactVariantLookupData:
+      type: object
+      additionalProperties: false
+      required: [state, matchCount, hasAdditionalMatches, matches]
+      properties:
+        state:
+          type: string
+          enum:
+            - found_with_inventory
+            - found_zero_inventory
+            - inventory_not_tracked
+            - no_inventory_levels
+            - product_not_found
+            - ambiguous
+          description: Overall exact-lookup outcome. Do not select a match when ambiguous.
+        matchCount:
+          type: integer
+          minimum: 0
+          maximum: 2
+          description: Number of distinguishing matches returned by this bounded lookup.
+        hasAdditionalMatches:
+          type: boolean
+          description: Whether Shopify reports more matching variants than were returned.
+        matches:
+          type: array
+          maxItems: 2
+          items:
+            $ref: '#/components/schemas/ExactVariantLookupMatch'
     ProductSearchResult:
       type: object
       additionalProperties: false
@@ -595,15 +697,13 @@ components:
           $ref: '#/components/schemas/ProductSearchResult'
         meta:
           $ref: '#/components/schemas/ResponseMeta'
-    VariantLookupResponse:
+    ExactVariantLookupResponse:
       type: object
       additionalProperties: false
       required: [data, meta]
       properties:
         data:
-          type: array
-          items:
-            $ref: '#/components/schemas/VariantLookupResult'
+          $ref: '#/components/schemas/ExactVariantLookupData'
         meta:
           $ref: '#/components/schemas/ResponseMeta'
     ProductResponse:

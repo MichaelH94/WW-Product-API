@@ -245,3 +245,19 @@ export function expectRecord(value: unknown, path: string): Record<string, unkno
 export function expectArray(value: unknown, path: string): unknown[] {
   return array(value, path);
 }
+
+export function expectString(value: unknown, path: string): string {
+  return string(value, path);
+}
+
+export function expectNullableString(value: unknown, path: string): string | null {
+  return nullableString(value, path);
+}
+
+export function expectBoolean(value: unknown, path: string): boolean {
+  return boolean(value, path);
+}
+
+export function expectNumber(value: unknown, path: string): number {
+  return number(value, path);
+}

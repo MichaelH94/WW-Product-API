@@ -307,3 +307,41 @@ test("distinguishes zero inventory, untracked inventory, and empty levels", asyn
   assert.equal((await api.getInventoryForVariant("20"))?.state,
     "no_inventory_levels");
 });
+
+test("exact SAMF180 lookup retries a transient Shopify failure and returns inventory", async () => {
+  let attempts = 0;
+  const executor = retryingExecutor({
+    fetcher: async () => {
+      attempts += 1;
+      if (attempts === 1) return graphqlError("INTERNAL_SERVER_ERROR");
+      return Response.json({
+        data: {
+          productVariants: {
+            nodes: [{
+              ...rawVariant({tracked: true, levels: [rawLevel(4)]}),
+              product: {
+                id: "gid://shopify/Product/10",
+                title: "Example",
+                status: "ACTIVE",
+                vendor: "Acme",
+                productType: "Parts",
+              },
+            }],
+            pageInfo: {hasNextPage: false},
+          },
+        },
+      });
+    },
+  });
+  const api = createProductDataAccess(executor);
+
+  const result = await api.getProductBySku("SAMF180", {
+    requestId: "request-samf180",
+    route: "/api/products/by-sku/SAMF180",
+  });
+
+  assert.equal(attempts, 2);
+  assert.equal(result.state, "found_with_inventory");
+  assert.equal(result.matches[0]?.variant.sku, "SAMF180");
+  assert.equal(result.matches[0]?.variant.inventoryItem?.levels[0]?.available, 4);
+});

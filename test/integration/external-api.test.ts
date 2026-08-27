@@ -7,6 +7,7 @@ import {
   ADMIN_API_VERSION,
   ShopifyAdminGraphqlError,
   ShopifyAdminHttpError,
+  ShopifyAdminRetryExhaustedError,
   ShopifyAdminTimeoutError,
   type AdminGraphqlExecutor,
 } from "../../shared/shopify/admin.ts";
@@ -179,18 +180,58 @@ const shopifyExecutor: AdminGraphqlExecutor = async <TData>(
     } as TData;
   }
 
-  if (query.includes("LookupProductVariants")) {
-    observations.push({operation: "LookupProductVariants", variables});
+  if (query.includes("LookupProductVariantInventory")) {
+    observations.push({operation: "LookupProductVariantInventory", variables});
     const searchQuery = String(variables.query ?? "");
-    const matches =
-      searchQuery === 'sku:"SKU-001"' ||
-      searchQuery === 'barcode:"0012345678905"';
+    if (searchQuery === 'sku:"TRANSIENT"') {
+      throw new ShopifyAdminRetryExhaustedError({
+        category: "network_failure",
+        attempts: 3,
+        lastError: new TypeError("sensitive transient cause"),
+        shopifyRequestIds: ["internal-shopify-request-id"],
+      });
+    }
+
+    const exactVariant = (overrides: Record<string, unknown> = {}) => ({
+      ...RAW_VARIANTS[0],
+      ...overrides,
+      product: RAW_PRODUCT_SUMMARY,
+    });
+    let nodes: Record<string, unknown>[] = [];
+    if (searchQuery === 'sku:"EV1-LE"') nodes = [exactVariant({sku: "EV1-LE"})];
+    if (searchQuery === 'sku:"SAMF180"') nodes = [exactVariant({sku: "SAMF180"})];
+    if (searchQuery === 'sku:"SKU-ZERO"') {
+      nodes = [exactVariant({
+        sku: "SKU-ZERO",
+        inventoryItem: {
+          ...RAW_INVENTORY_ITEM,
+          inventoryLevels: {
+            nodes: RAW_INVENTORY_ITEM.inventoryLevels.nodes.map((level) => ({
+              ...level,
+              quantities: level.quantities.map((quantity) => ({...quantity, quantity: 0})),
+            })),
+            pageInfo: PAGE_INFO,
+          },
+        },
+      })];
+    }
+    if (searchQuery === 'sku:"SKU-UNTRACKED"') {
+      nodes = [exactVariant({
+        sku: "SKU-UNTRACKED",
+        inventoryItem: {...RAW_INVENTORY_ITEM, tracked: false},
+      })];
+    }
+    if (searchQuery === 'sku:"SKU-DUPLICATE"') {
+      nodes = [
+        exactVariant({id: "gid://shopify/ProductVariant/200", sku: "SKU-DUPLICATE"}),
+        exactVariant({id: "gid://shopify/ProductVariant/202", sku: "SKU-DUPLICATE"}),
+      ];
+    }
+    if (searchQuery === 'barcode:"0012345678905"') nodes = [exactVariant()];
 
     return {
       productVariants: {
-        nodes: matches
-          ? [{...RAW_VARIANT_SUMMARY, product: RAW_PRODUCT_SUMMARY}]
-          : [],
+        nodes,
         pageInfo: PAGE_INFO,
       },
     } as TData;
@@ -392,9 +433,16 @@ function assertVariantSchema(value: unknown): void {
 
 function assertVariantLookupSchema(value: unknown): void {
   assertRecord(value);
-  assert.deepEqual(Object.keys(value).sort(), ["product", "variant"]);
-  assertProductSummarySchema(value.product);
-  assertVariantSchema(value.variant);
+  assert.deepEqual(Object.keys(value).sort(), [
+    "hasAdditionalMatches",
+    "matchCount",
+    "matches",
+    "state",
+  ]);
+  assert.equal(typeof value.state, "string");
+  assert.equal(typeof value.matchCount, "number");
+  assert.equal(typeof value.hasAdditionalMatches, "boolean");
+  assert.ok(Array.isArray(value.matches));
 }
 
 test("requires a valid bearer credential without affecting health", async () => {
@@ -456,22 +504,32 @@ test('broad "snowboards" search is lightweight and normalized', async () => {
   });
 });
 
-test("performs exact SKU lookup and preserves the SKU", async () => {
+for (const sku of ["EV1-LE", "SAMF180"]) {
+test(`performs inventory-enriched exact SKU lookup for ${sku} in one operation`, async () => {
   observations.length = 0;
-  const response = await request("/api/products/by-sku/SKU-001");
+  const response = await request(`/api/products/by-sku/${sku}`);
   assert.equal(response.status, 200);
   const payload = await readJson(response);
   assertSuccessEnvelope(response, payload);
-  assert.ok(Array.isArray(payload.data));
-  assertVariantLookupSchema(payload.data[0]);
-  assertRecord(payload.data[0]);
-  assertRecord(payload.data[0].variant);
-  assert.equal(payload.data[0].variant.sku, "SKU-001");
+  assertVariantLookupSchema(payload.data);
+  assertRecord(payload.data);
+  assert.equal(payload.data.state, "found_with_inventory");
+  const matches = payload.data.matches as Array<Record<string, unknown>>;
+  assert.equal(matches.length, 1);
+  assertRecord(matches[0].variant);
+  assert.equal(matches[0].variant.sku, sku);
+  assertRecord(matches[0].variant.inventoryItem);
+  const levels = matches[0].variant.inventoryItem.levels as Array<Record<string, unknown>>;
+  assert.equal(levels.length, 2);
+  assert.equal(levels[0].available, 0);
+  assert.equal(levels[0].on_hand, 9);
+  assert.equal(levels[0].incoming, 3);
   assert.deepEqual(observations.at(-1), {
-    operation: "LookupProductVariants",
-    variables: {query: 'sku:"SKU-001"', first: 25, after: null},
+    operation: "LookupProductVariantInventory",
+    variables: {query: `sku:"${sku}"`},
   });
 });
+}
 
 test("performs exact barcode lookup without losing leading zeroes", async () => {
   observations.length = 0;
@@ -479,18 +537,47 @@ test("performs exact barcode lookup without losing leading zeroes", async () => 
   assert.equal(response.status, 200);
   const payload = await readJson(response);
   assertSuccessEnvelope(response, payload);
-  assert.ok(Array.isArray(payload.data));
-  assertVariantLookupSchema(payload.data[0]);
-  assertRecord(payload.data[0]);
-  assertRecord(payload.data[0].variant);
+  assertVariantLookupSchema(payload.data);
+  assertRecord(payload.data);
+  const matches = payload.data.matches as Array<Record<string, unknown>>;
+  assertRecord(matches[0]);
+  assertRecord(matches[0].variant);
   assert.equal(
-    payload.data[0].variant.barcode,
+    matches[0].variant.barcode,
     "0012345678905",
   );
   assert.deepEqual(observations.at(-1), {
-    operation: "LookupProductVariants",
-    variables: {query: 'barcode:"0012345678905"', first: 25, after: null},
+    operation: "LookupProductVariantInventory",
+    variables: {query: 'barcode:"0012345678905"'},
   });
+});
+
+test("exact lookup reports zero, untracked, duplicate, missing, and transient states", async () => {
+  for (const [sku, state] of [
+    ["SKU-ZERO", "found_zero_inventory"],
+    ["SKU-UNTRACKED", "inventory_not_tracked"],
+    ["SKU-MISSING", "product_not_found"],
+  ] as const) {
+    const response = await request(`/api/products/by-sku/${sku}`);
+    assert.equal(response.status, 200);
+    const payload = await readJson(response);
+    assertRecord(payload.data);
+    assert.equal(payload.data.state, state);
+  }
+
+  const duplicateResponse = await request("/api/products/by-sku/SKU-DUPLICATE");
+  const duplicatePayload = await readJson(duplicateResponse);
+  assertRecord(duplicatePayload.data);
+  assert.equal(duplicatePayload.data.state, "ambiguous");
+  assert.equal(duplicatePayload.data.matchCount, 2);
+
+  const transientResponse = await request("/api/products/by-sku/TRANSIENT");
+  const transientPayload = await readJson(transientResponse);
+  assert.equal(transientResponse.status, 503);
+  assertRecord(transientPayload.error);
+  assertRecord(transientPayload.error.details);
+  assert.equal(transientPayload.error.details.state, "temporary_upstream_failure");
+  assert.doesNotMatch(JSON.stringify(transientPayload), /sensitive|internal-shopify/);
 });
 
 test("looks up a product and returns exact inventory quantities by location", async () => {
@@ -613,13 +700,23 @@ test("distinguishes missing products from empty exact-match results", async () =
   assert.equal(skuResponse.status, 200);
   const skuPayload = await readJson(skuResponse);
   assertSuccessEnvelope(skuResponse, skuPayload);
-  assert.deepEqual(skuPayload.data, []);
+  assert.deepEqual(skuPayload.data, {
+    state: "product_not_found",
+    matchCount: 0,
+    hasAdditionalMatches: false,
+    matches: [],
+  });
 
   const barcodeResponse = await request("/api/products/by-barcode/999");
   assert.equal(barcodeResponse.status, 200);
   const barcodePayload = await readJson(barcodeResponse);
   assertSuccessEnvelope(barcodeResponse, barcodePayload);
-  assert.deepEqual(barcodePayload.data, []);
+  assert.deepEqual(barcodePayload.data, {
+    state: "product_not_found",
+    matchCount: 0,
+    hasAdditionalMatches: false,
+    matches: [],
+  });
 });
 
 test("rejects malformed query, pagination, path, and method inputs", async () => {
