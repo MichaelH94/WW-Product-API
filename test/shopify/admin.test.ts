@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  ADMIN_GRAPHQL_ENDPOINT,
   ShopifyAdminApiError,
   ShopifyAdminGraphqlError,
   ShopifyAdminHttpError,
   ShopifyAdminResponseError,
   createAdminGraphqlExecutor,
 } from "../../shared/shopify/admin.ts";
+import {ADMIN_GRAPHQL_ENDPOINT} from "../../shared/shopify/admin-direct.ts";
 
 test("uses the authenticated Shopify Admin transport and returns data", async () => {
   let requestUrl = "";
@@ -17,7 +17,7 @@ test("uses the authenticated Shopify Admin transport and returns data", async ()
     requestUrl = url;
     requestInit = init;
     return Response.json({ data: { shop: { name: "Test Shop" } } });
-  });
+  }, ADMIN_GRAPHQL_ENDPOINT);
 
   const result = await execute<{ shop: { name: string } }>(
     "query ShopName { shop { name } }",

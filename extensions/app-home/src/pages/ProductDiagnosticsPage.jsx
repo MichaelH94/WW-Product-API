@@ -1,7 +1,7 @@
 import {useEffect, useState} from 'preact/hooks';
 import {useLocation} from 'preact-iso';
 
-import {searchProducts} from '../../../../shared/shopify/products.ts';
+import {searchProducts} from '../../../../shared/shopify/products-direct.ts';
 
 export default function ProductDiagnosticsPage({enabled = false}) {
   const {route} = useLocation();

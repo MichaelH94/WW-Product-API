@@ -11,7 +11,7 @@ export default async () => {
     try {
       const [pageModule, shopModule] = await Promise.all([
         import('./pages/ProductDiagnosticsPage.jsx'),
-        import('../../../shared/shopify/shop.ts'),
+        import('../../../shared/shopify/shop-direct.ts'),
       ]);
       if (await shopModule.isPartnerDevelopmentStore()) {
         ProductDiagnosticsPage = pageModule.default;

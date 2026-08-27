@@ -1,5 +1,3 @@
-import {createHash, randomUUID, timingSafeEqual} from "node:crypto";
-
 import {
   ADMIN_API_VERSION,
   ShopifyAdminApiError,
@@ -54,16 +52,35 @@ function json(status: number, body: unknown, requestId: string, extraHeaders = {
   });
 }
 
-function equalSecret(actual: string, expected: string): boolean {
-  const actualDigest = createHash("sha256").update(actual, "utf8").digest();
-  const expectedDigest = createHash("sha256").update(expected, "utf8").digest();
-  return timingSafeEqual(actualDigest, expectedDigest);
+async function equalSecret(actual: string, expected: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const [actualDigest, expectedDigest] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(actual)),
+    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
+  ]);
+  const actualBytes = new Uint8Array(actualDigest);
+  const expectedBytes = new Uint8Array(expectedDigest);
+  const workerSubtle = crypto.subtle as SubtleCrypto & {
+    timingSafeEqual?: (a: BufferSource, b: BufferSource) => boolean;
+  };
+
+  if (typeof workerSubtle.timingSafeEqual === "function") {
+    return workerSubtle.timingSafeEqual(actualBytes, expectedBytes);
+  }
+
+  // SHA-256 outputs are fixed length. This fallback keeps local Node tests
+  // portable while production Workers use their native timing-safe primitive.
+  let mismatch = 0;
+  for (let index = 0; index < actualBytes.length; index += 1) {
+    mismatch |= actualBytes[index] ^ expectedBytes[index];
+  }
+  return mismatch === 0;
 }
 
-function authenticate(request: Request, expectedKey: string): void {
+async function authenticate(request: Request, expectedKey: string): Promise<void> {
   const authorization = request.headers.get("authorization") ?? "";
   const match = /^Bearer ([^\s]+)$/.exec(authorization);
-  if (!match || !equalSecret(match[1], expectedKey)) {
+  if (!match || !await equalSecret(match[1], expectedKey)) {
     throw new ApiRequestError(401, "UNAUTHORIZED", "A valid bearer token is required");
   }
 }
@@ -172,7 +189,7 @@ export async function handleApiRequest(
   request: Request,
   options: {dataAccess: ProductApiDataAccess; internalApiKey: string},
 ): Promise<Response> {
-  const requestId = randomUUID();
+  const requestId = crypto.randomUUID();
 
   try {
     const url = new URL(request.url);
@@ -183,7 +200,7 @@ export async function handleApiRequest(
       throw new ApiRequestError(404, "NOT_FOUND", "API route not found");
     }
 
-    authenticate(request, options.internalApiKey);
+    await authenticate(request, options.internalApiKey);
 
     if (request.method !== "GET") {
       throw new ApiRequestError(405, "METHOD_NOT_ALLOWED", "Only GET is supported");

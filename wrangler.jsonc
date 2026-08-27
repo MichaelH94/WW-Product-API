@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "test-run-read-only-api",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-08-27",
+  "workers_dev": true,
+  "secrets": {
+    "required": [
+      "SHOPIFY_SHOP",
+      "SHOPIFY_CLIENT_ID",
+      "SHOPIFY_CLIENT_SECRET",
+      "INTERNAL_API_KEY"
+    ]
+  }
+}

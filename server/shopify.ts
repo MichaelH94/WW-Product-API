@@ -11,6 +11,11 @@ interface TokenResponse {
   expires_in: number;
 }
 
+export interface ShopifyAccessTokenProvider {
+  (): Promise<string>;
+  invalidate(token?: string): void;
+}
+
 export function createClientCredentialsTokenProvider(options: {
   shopDomain: string;
   clientId: string;
@@ -18,7 +23,7 @@ export function createClientCredentialsTokenProvider(options: {
   fetcher?: FetchLike;
   now?: () => number;
   timeoutMs?: number;
-}): () => Promise<string> {
+}): ShopifyAccessTokenProvider {
   const fetcher = options.fetcher ?? globalThis.fetch.bind(globalThis);
   const now = options.now ?? Date.now;
   const timeoutMs = options.timeoutMs ?? 10_000;
@@ -26,7 +31,7 @@ export function createClientCredentialsTokenProvider(options: {
   let expiresAt = 0;
   let pending: Promise<string> | null = null;
 
-  return async () => {
+  const getAccessToken = async () => {
     if (token && now() < expiresAt - 60_000) return token;
     if (pending) return pending;
 
@@ -71,11 +76,22 @@ export function createClientCredentialsTokenProvider(options: {
 
     return pending;
   };
+
+  getAccessToken.invalidate = (invalidToken?: string) => {
+    if (invalidToken === undefined || token === invalidToken) {
+      token = null;
+      expiresAt = 0;
+    }
+  };
+
+  return getAccessToken;
 }
 
-export function createServerAdminGraphqlExecutor(options: {
+export function createShopifyAdminGraphqlExecutor(options: {
   shopDomain: string;
-  getAccessToken: () => Promise<string>;
+  getAccessToken: (() => Promise<string>) & {
+    invalidate?: (token?: string) => void;
+  };
   fetcher?: FetchLike;
   timeoutMs?: number;
 }): AdminGraphqlExecutor {
@@ -84,8 +100,7 @@ export function createServerAdminGraphqlExecutor(options: {
   const timeoutMs = options.timeoutMs ?? 15_000;
 
   return createAdminGraphqlExecutor(async (_input, init) => {
-    const accessToken = await options.getAccessToken();
-    return fetcher(endpoint, {
+    const send = async (accessToken: string) => fetcher(endpoint, {
       ...init,
       signal: init?.signal
         ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
@@ -95,5 +110,20 @@ export function createServerAdminGraphqlExecutor(options: {
         "X-Shopify-Access-Token": accessToken,
       },
     });
-  });
+
+    let accessToken = await options.getAccessToken();
+    let response = await send(accessToken);
+
+    if (response.status === 401 && options.getAccessToken.invalidate) {
+      options.getAccessToken.invalidate(accessToken);
+      accessToken = await options.getAccessToken();
+      response = await send(accessToken);
+    }
+
+    return response;
+  }, endpoint);
 }
+
+// Retain the Node entry point's existing import while the shared transport is
+// also used by Cloudflare Workers.
+export const createServerAdminGraphqlExecutor = createShopifyAdminGraphqlExecutor;

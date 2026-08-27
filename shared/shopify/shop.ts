@@ -1,5 +1,4 @@
 import {
-  executeAdminGraphql,
   ShopifyAdminResponseError,
   type AdminGraphqlExecutor,
 } from "./admin.ts";
@@ -13,7 +12,7 @@ export const IS_PARTNER_DEVELOPMENT_STORE_QUERY = `query IsPartnerDevelopmentSto
 }`;
 
 export async function isPartnerDevelopmentStore(
-  executor: AdminGraphqlExecutor = executeAdminGraphql,
+  executor: AdminGraphqlExecutor,
 ): Promise<boolean> {
   const data = await executor<unknown>(IS_PARTNER_DEVELOPMENT_STORE_QUERY);
   if (typeof data !== "object" || data === null || Array.isArray(data)) {

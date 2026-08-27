@@ -1,6 +1,4 @@
 export const ADMIN_API_VERSION = "2026-07";
-export const ADMIN_GRAPHQL_ENDPOINT =
-  `shopify:admin/api/${ADMIN_API_VERSION}/graphql.json`;
 
 export type GraphqlVariables = Record<string, unknown>;
 
@@ -92,7 +90,8 @@ function isTimeoutError(value: unknown): boolean {
 }
 
 export function createAdminGraphqlExecutor(
-  fetcher: FetchLike = globalThis.fetch.bind(globalThis),
+  fetcher: FetchLike,
+  endpoint = "",
 ): AdminGraphqlExecutor {
   return async function executeAdminGraphql<T>(
     query: string,
@@ -101,7 +100,7 @@ export function createAdminGraphqlExecutor(
     let response: Response;
 
     try {
-      response = await fetcher(ADMIN_GRAPHQL_ENDPOINT, {
+      response = await fetcher(endpoint, {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -157,5 +156,3 @@ export function createAdminGraphqlExecutor(
     return payload.data as T;
   };
 }
-
-export const executeAdminGraphql = createAdminGraphqlExecutor();

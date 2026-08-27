@@ -1,7 +1,4 @@
-import {
-  executeAdminGraphql,
-  type AdminGraphqlExecutor,
-} from "./admin.ts";
+import type {AdminGraphqlExecutor} from "./admin.ts";
 import {
   expectArray,
   expectRecord,
@@ -137,7 +134,6 @@ function metafieldSelection(selectors: ReadonlyArray<MetafieldSelector> = []): {
       ) { namespace key type jsonValue }`).join(""),
   };
 }
-
 function quoteSearchValue(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) throw new TypeError("Search value must not be empty");
@@ -272,7 +268,7 @@ async function lookupVariants(
   });
 }
 
-export function createProductDataAccess(executor: AdminGraphqlExecutor = executeAdminGraphql) {
+export function createProductDataAccess(executor: AdminGraphqlExecutor) {
   return {
     async searchProducts(options: ProductSearchOptions): Promise<ProductSearchResult> {
       const built = buildSearchProductsQuery(
@@ -327,11 +323,3 @@ export function createProductDataAccess(executor: AdminGraphqlExecutor = execute
     },
   };
 }
-
-const productDataAccess = createProductDataAccess();
-
-export const searchProducts = productDataAccess.searchProducts;
-export const getProductById = productDataAccess.getProductById;
-export const getProductBySku = productDataAccess.getProductBySku;
-export const getProductByBarcode = productDataAccess.getProductByBarcode;
-export const getInventoryForVariant = productDataAccess.getInventoryForVariant;

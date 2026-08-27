@@ -1,3 +1,7 @@
+import {normalizeShopDomain} from "../shared/shopify/domain.ts";
+
+export {normalizeShopDomain} from "../shared/shopify/domain.ts";
+
 export interface ApiConfig {
   shopDomain: string;
   clientId: string;
@@ -12,16 +16,6 @@ function required(environment: NodeJS.ProcessEnv, names: string[]): string {
     if (value) return value;
   }
   throw new Error(`Missing required environment variable: ${names.join(" or ")}`);
-}
-
-export function normalizeShopDomain(input: string): string {
-  let value = input.trim().toLowerCase();
-  value = value.replace(/^https?:\/\//, "").replace(/\/$/, "");
-  if (!value.includes(".")) value = `${value}.myshopify.com`;
-  if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(value)) {
-    throw new Error("SHOPIFY_SHOP must be a valid myshopify.com domain or store handle");
-  }
-  return value;
 }
 
 export function loadApiConfig(environment: NodeJS.ProcessEnv = process.env): ApiConfig {
