@@ -6,17 +6,14 @@ info:
     name: Proprietary
     identifier: LicenseRef-Proprietary
   description: >-
-    Read-only product, variant, barcode, SKU, and inventory lookups for an AI
-    tool caller. All operations require an application bearer API key. The API
-    never exposes Shopify credentials or session objects and provides no
-    mutation-capable operations.
+    Read-only product, variant, SKU, barcode, and inventory retrieval for a
+    Custom GPT. Choose the exact SKU or barcode operation when that identifier
+    is available; use product search for titles, vendors, product types, or
+    general discovery; and use product detail only with an ID returned by a
+    previous result. All operations require an application bearer API key.
 servers:
-  - url: https://{apiHost}
-    description: Deployed internal API host. Replace the variable default before use.
-    variables:
-      apiHost:
-        default: api-host.invalid
-        description: Hostname of the deployed API, without a scheme or path.
+  - url: https://test-run-read-only-api.ww-api.workers.dev
+    description: Production Cloudflare Worker for the read-only product API.
 security:
   - internalApiKey: []
 tags:
@@ -31,9 +28,9 @@ paths:
       operationId: getHealth
       summary: Check API health
       description: >-
-        Confirm that the API is running and report the Shopify Admin API
-        version used for product requests. This operation does not call
-        Shopify or return store data.
+        Use only to confirm that the API is reachable or to diagnose a failed
+        tool call. Returns service status and the Shopify Admin API version,
+        but no product or store data.
       responses:
         '200':
           description: The API is running and its Worker bindings are valid.
@@ -55,11 +52,13 @@ paths:
       operationId: searchProducts
       summary: Search products
       description: >-
-        Search for products using free text, vendor, product type, or a
-        combination of those filters. Supply at least one of q, vendor, or
-        productType. Use the returned pageInfo.endCursor as after to fetch the
-        next page. Results include product IDs, variants, exact SKU and barcode
-        values, price strings, and inventory quantities by location.
+        Use for product discovery by title or other free text, vendor, product
+        type, or a combination of those filters. Do not use this operation when
+        an exact SKU or barcode is available; select the corresponding exact
+        lookup operation instead. Supply at least one of q, vendor, or
+        productType. To continue a result set, pass pageInfo.endCursor unchanged
+        as after. Results include IDs for follow-up detail calls, variants,
+        exact SKU and barcode values, price strings, and inventory by location.
       parameters:
         - name: q
           in: query
@@ -134,9 +133,10 @@ paths:
       operationId: findProductsBySku
       summary: Find variants by SKU
       description: >-
-        Find every returned variant whose exact SKU matches the supplied value.
-        Shopify does not guarantee SKU uniqueness, so data is always an array.
-        An empty array is a successful lookup with no matches, not an API error.
+        Use when the caller provides a complete SKU and needs the associated
+        variant, parent product, price, or inventory. Matching is exact. Shopify
+        does not guarantee SKU uniqueness, so data is always an array. An empty
+        array means no variant matched and is not an API error.
       parameters:
         - name: sku
           in: path
@@ -173,10 +173,11 @@ paths:
       operationId: findProductsByBarcode
       summary: Find variants by barcode
       description: >-
-        Find every returned variant whose exact barcode matches the supplied
-        value. Shopify does not guarantee barcode uniqueness, so data is always
-        an array. An empty array is a successful lookup with no matches, not an
-        API error. Preserve leading zeroes by treating the barcode as a string.
+        Use when the caller provides a complete barcode and needs the associated
+        variant, parent product, price, or inventory. Matching is exact and
+        leading zeroes must be preserved. Shopify does not guarantee barcode
+        uniqueness, so data is always an array. An empty array means no variant
+        matched and is not an API error.
       parameters:
         - name: barcode
           in: path
@@ -213,9 +214,10 @@ paths:
       operationId: getProductById
       summary: Get one product by ID
       description: >-
-        Retrieve detailed product, variant, selected-option, inventory, and
-        location information. Use a numeric Shopify product ID or a URL-encoded
-        Product GID previously returned by another operation.
+        Use for a follow-up request when a product ID is already known from a
+        search, SKU lookup, or barcode lookup. Returns detailed product,
+        variant, selected-option, price, inventory, and location information.
+        Do not use this operation to search by title, SKU, or barcode.
       parameters:
         - name: id
           in: path
