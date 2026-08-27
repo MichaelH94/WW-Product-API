@@ -57,7 +57,9 @@ test("Worker obtains a server-side token and caches it across API requests", asy
   let tokenRequests = 0;
   let graphqlRequests = 0;
   const observedTokens: string[] = [];
+  const logs: Record<string, unknown>[] = [];
   const options: WorkerHandlerOptions = {
+    logger: (event) => logs.push(event),
     fetcher: async (url, init) => {
       if (url.endsWith("/admin/oauth/access_token")) {
         tokenRequests += 1;
@@ -102,6 +104,18 @@ test("Worker obtains a server-side token and caches it across API requests", asy
     "shopify-token-must-remain-server-side",
     "shopify-token-must-remain-server-side",
   ]);
+  const serializedLogs = JSON.stringify(logs);
+  assert.doesNotMatch(serializedLogs, /shopify-token-must-remain-server-side/);
+  assert.doesNotMatch(serializedLogs, /shopify-client-secret/);
+  assert.doesNotMatch(serializedLogs, new RegExp(API_KEY));
+  assert.doesNotMatch(serializedLogs, /Authorization/i);
+  const upstreamLog = logs.find(({event}) => event === "shopify_upstream_success");
+  assert.equal(upstreamLog?.route, "/api/products/search");
+  assert.equal(upstreamLog?.attempt, 1);
+  assert.equal(typeof upstreamLog?.requestId, "string");
+  assert.equal(upstreamLog?.final, true);
+  assert.ok(logs.some(({event, final}) =>
+    event === "request_complete" && final === "success"));
 });
 
 test("Worker enables cost diagnostics only when requested and never returns them", async () => {
@@ -217,6 +231,7 @@ test("Worker exposes authenticated read-only inventory by variant and location",
   assert.equal(response.status, 200);
   const payload = await response.json();
   assert.equal(payload.data.variant.inventoryItem.tracked, true);
+  assert.equal(payload.data.state, "found_with_inventory");
   assert.equal(payload.data.variant.inventoryItem.levels[0].location.active, true);
   assert.deepEqual(payload.data.variant.inventoryItem.levels[0].quantities, [
     {name: "available", quantity: 4},

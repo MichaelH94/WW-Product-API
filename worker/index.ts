@@ -2,6 +2,7 @@ import {handleApiRequest} from "../server/api.ts";
 import {
   createClientCredentialsTokenProvider,
   createShopifyAdminGraphqlExecutor,
+  type ShopifySafeLogger,
 } from "../server/shopify.ts";
 import type {FetchLike} from "../shared/shopify/admin.ts";
 import {createProductDataAccess} from "../shared/shopify/products.ts";
@@ -18,6 +19,21 @@ export interface WorkerHandlerOptions {
   tokenTimeoutMs?: number;
   adminTimeoutMs?: number;
   onCostDebug?: (cost: Record<string, unknown>) => void;
+  retrySleep?: (milliseconds: number) => Promise<void>;
+  retryRandom?: () => number;
+  logger?: ShopifySafeLogger;
+}
+
+function productionLogger(event: Record<string, unknown>): void {
+  console.info(JSON.stringify(event));
+}
+
+function safeLog(logger: ShopifySafeLogger, event: Record<string, unknown>): void {
+  try {
+    logger(event);
+  } catch {
+    // Logging must never affect API behavior.
+  }
 }
 
 function internalConfigurationError(): Response {
@@ -44,6 +60,7 @@ function internalConfigurationError(): Response {
 
 export function createWorkerHandler(options: WorkerHandlerOptions = {}) {
   let runtime: WorkerRuntime | null = null;
+  const logger = options.logger ?? productionLogger;
 
   return async function fetchWorker(
     request: Request,
@@ -69,6 +86,10 @@ export function createWorkerHandler(options: WorkerHandlerOptions = {}) {
           ...(options.adminTimeoutMs
             ? {timeoutMs: options.adminTimeoutMs}
             : {}),
+          ...(options.now ? {now: options.now} : {}),
+          ...(options.retrySleep ? {sleep: options.retrySleep} : {}),
+          ...(options.retryRandom ? {random: options.retryRandom} : {}),
+          logger,
           ...(config.graphqlCostDebug
             ? {
                 costDebug: true,
@@ -85,9 +106,26 @@ export function createWorkerHandler(options: WorkerHandlerOptions = {}) {
         };
       }
 
-      return await handleApiRequest(request, runtime);
+      const response = await handleApiRequest(request, runtime);
+      safeLog(logger, {
+        event: "request_complete",
+        requestId: response.headers.get("x-request-id") ?? "unknown",
+        route: new URL(request.url).pathname,
+        status: response.status,
+        final: response.ok ? "success" : "failure",
+      });
+      return response;
     } catch {
-      return internalConfigurationError();
+      const response = internalConfigurationError();
+      safeLog(logger, {
+        event: "request_complete",
+        requestId: response.headers.get("x-request-id") ?? "unknown",
+        route: new URL(request.url).pathname,
+        status: response.status,
+        final: "failure",
+        category: "configuration_error",
+      });
+      return response;
     }
   };
 }

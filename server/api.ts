@@ -3,7 +3,9 @@ import {
   ShopifyAdminApiError,
   ShopifyAdminGraphqlError,
   ShopifyAdminHttpError,
+  ShopifyAdminRetryExhaustedError,
   ShopifyAdminTimeoutError,
+  type ShopifyRequestContext,
 } from "../shared/shopify/admin.ts";
 import type {
   InventoryForVariant,
@@ -19,13 +21,24 @@ export interface ProductApiDataAccess {
     productType?: string;
     after?: string;
     first: number;
-  }): Promise<ProductSearchResult>;
-  getProductBySku(sku: string): Promise<VariantLookupResult[]>;
-  getProductByBarcode(barcode: string): Promise<VariantLookupResult[]>;
-  getProductById(id: string): Promise<Product | null>;
+  }, context?: ShopifyRequestContext): Promise<ProductSearchResult>;
+  getProductBySku(
+    sku: string,
+    context?: ShopifyRequestContext,
+  ): Promise<VariantLookupResult[]>;
+  getProductByBarcode(
+    barcode: string,
+    context?: ShopifyRequestContext,
+  ): Promise<VariantLookupResult[]>;
+  getProductById(
+    id: string,
+    options?: {metafields?: ReadonlyArray<{namespace: string; key: string}>},
+    context?: ShopifyRequestContext,
+  ): Promise<Product | null>;
   getInventoryForVariant(
     id: string,
     options: {first: number; after?: string},
+    context?: ShopifyRequestContext,
   ): Promise<InventoryForVariant | null>;
 }
 
@@ -192,17 +205,9 @@ function graphqlDiagnosticDetails(error: ShopifyAdminGraphqlError): Record<strin
     const code = extensions?.code;
     return typeof code === "string" && /^[A-Z0-9_]{1,64}$/.test(code) ? [code] : [];
   }))];
-  const shopifyRequestIds = [...new Set(error.errors.flatMap(({extensions}) => {
-    const requestId = extensions?.requestId;
-    return typeof requestId === "string" && /^[A-Za-z0-9-]{1,128}$/.test(requestId)
-      ? [requestId]
-      : [];
-  }))];
   return {
     retryable: shopifyCodes.includes("THROTTLED") ||
       shopifyCodes.includes("INTERNAL_SERVER_ERROR"),
-    ...(shopifyCodes.length ? {shopifyCodes} : {}),
-    ...(shopifyRequestIds.length ? {shopifyRequestIds} : {}),
   };
 }
 
@@ -214,6 +219,10 @@ export async function handleApiRequest(
 
   try {
     const url = new URL(request.url);
+    const requestContext: ShopifyRequestContext = {
+      requestId,
+      route: url.pathname,
+    };
 
     // Shopify authentication callbacks are deliberately outside this API-key
     // boundary. Only the documented external product API is protected here.
@@ -252,7 +261,7 @@ export async function handleApiRequest(
         ...(productType === undefined ? {} : {productType}),
         ...(after === undefined ? {} : {after}),
         first: limit(url.searchParams.get("limit")),
-      });
+      }, requestContext);
       return success(result, requestId);
     }
 
@@ -260,7 +269,10 @@ export async function handleApiRequest(
     if (skuMatch) {
       assertQueryParameters(url, new Set());
       return success(
-        await options.dataAccess.getProductBySku(pathValue(skuMatch[1], "sku", 100)),
+        await options.dataAccess.getProductBySku(
+          pathValue(skuMatch[1], "sku", 100),
+          requestContext,
+        ),
         requestId,
       );
     }
@@ -271,6 +283,7 @@ export async function handleApiRequest(
       return success(
         await options.dataAccess.getProductByBarcode(
           pathValue(barcodeMatch[1], "barcode", 100),
+          requestContext,
         ),
         requestId,
       );
@@ -281,8 +294,14 @@ export async function handleApiRequest(
       assertQueryParameters(url, new Set());
       const product = await options.dataAccess.getProductById(
         pathValue(productMatch[1], "id", 100),
+        {},
+        requestContext,
       );
-      if (!product) throw new ApiRequestError(404, "NOT_FOUND", "Product not found");
+      if (!product) {
+        throw new ApiRequestError(404, "NOT_FOUND", "Product not found", {
+          state: "product_not_found",
+        });
+      }
       return success(product, requestId);
     }
 
@@ -299,9 +318,12 @@ export async function handleApiRequest(
           first: inventoryLimit(url.searchParams.get("limit")),
           ...(after === undefined ? {} : {after}),
         },
+        requestContext,
       );
       if (!inventory) {
-        throw new ApiRequestError(404, "NOT_FOUND", "Product variant not found");
+        throw new ApiRequestError(404, "NOT_FOUND", "Product variant not found", {
+          state: "product_not_found",
+        });
       }
       return success(inventory, requestId);
     }
@@ -321,6 +343,24 @@ export async function handleApiRequest(
           : error.status === 401
           ? {"WWW-Authenticate": "Bearer"}
           : {},
+      );
+    }
+    if (error instanceof ShopifyAdminRetryExhaustedError) {
+      return json(
+        503,
+        {
+          error: {
+            code: "TEMPORARY_UPSTREAM_FAILURE",
+            message: "Shopify data is temporarily unavailable",
+            details: {
+              retryable: true,
+              state: "temporary_upstream_failure",
+            },
+          },
+          meta: {requestId},
+        },
+        requestId,
+        {"Retry-After": "1"},
       );
     }
     if (error instanceof ShopifyAdminTimeoutError) {

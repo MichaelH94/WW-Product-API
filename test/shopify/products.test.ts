@@ -257,6 +257,7 @@ test("gets inventory by numeric variant ID and returns null when absent", async 
   assert.equal(variables[1]?.first, 20);
   assert.equal(variables[1]?.after, null);
   assert.equal(result?.variant.inventoryItem?.levels[0]?.quantities[0]?.quantity, 7);
+  assert.equal(result?.state, "found_with_inventory");
   assert.equal(missing, null);
 });
 

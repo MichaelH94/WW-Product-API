@@ -77,6 +77,10 @@ inventory tracking status and exact `available`, `on_hand`, and `incoming`
 quantities grouped by location. Locations include active status and staff-useful
 address fields. Use `limit` (default 20, maximum 50) and pass an unchanged
 `inventoryItem.pageInfo.endCursor` as `after` to retrieve additional locations.
+The response includes one of `found_with_inventory`, `found_zero_inventory`,
+`inventory_not_tracked`, or `no_inventory_levels`. Missing products and
+exhausted transient upstream failures use `product_not_found` and
+`temporary_upstream_failure` in sanitized error details.
 
 Shopify's 2026-07 schema requires `read_products`, `read_inventory`, and
 `read_locations` for product inventory. Selecting any `Location.address` field
@@ -92,5 +96,7 @@ No mutation or product write routes exist. POST, PUT, PATCH, and DELETE return
 Shopify token requests time out after 10 seconds and Admin GraphQL requests
 after 15 seconds. Upstream timeouts return `504 SHOPIFY_TIMEOUT`. Shopify
 throttling returns `503 SHOPIFY_THROTTLED` with `Retry-After`; callers should
-wait before retrying. Diagnostic details contain only safe status, retryability,
-Shopify error codes, Shopify request IDs, and this API's request ID.
+wait before retrying. Safe read requests retry transient network, HTTP, and
+Shopify GraphQL failures up to three total attempts using jittered exponential
+backoff. Diagnostic details contain only safe status, retryability, result
+state, and this API's request ID; Shopify request IDs stay in internal logs.

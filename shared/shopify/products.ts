@@ -1,4 +1,7 @@
-import type {AdminGraphqlExecutor} from "./admin.ts";
+import type {
+  AdminGraphqlExecutor,
+  ShopifyRequestContext,
+} from "./admin.ts";
 import {
   expectArray,
   expectRecord,
@@ -53,6 +56,11 @@ export interface VariantLookupResult {
 }
 
 export interface InventoryForVariant {
+  state:
+    | "found_with_inventory"
+    | "found_zero_inventory"
+    | "inventory_not_tracked"
+    | "no_inventory_levels";
   variant: ProductVariant;
 }
 
@@ -279,12 +287,13 @@ async function lookupVariants(
   field: "sku" | "barcode",
   value: string,
   executor: AdminGraphqlExecutor,
+  context?: ShopifyRequestContext,
 ): Promise<VariantLookupResult[]> {
   const data = await executor<unknown>(LOOKUP_PRODUCT_VARIANTS_QUERY, {
     query: `${field}:${quoteSearchValue(value)}`,
     first: VARIANT_LOOKUP_LIMIT,
     after: null,
-  });
+  }, context);
   const root = expectRecord(data, "data");
   const connection = expectRecord(root.productVariants, "data.productVariants");
   return expectArray(connection.nodes, "data.productVariants.nodes").map((node, index) => {
@@ -299,13 +308,16 @@ async function lookupVariants(
 
 export function createProductDataAccess(executor: AdminGraphqlExecutor) {
   return {
-    async searchProducts(options: ProductSearchOptions): Promise<ProductSearchResult> {
+    async searchProducts(
+      options: ProductSearchOptions,
+      context?: ShopifyRequestContext,
+    ): Promise<ProductSearchResult> {
       const built = buildSearchProductsQuery();
       const data = await executor<unknown>(built.query, {
         query: combinedSearchQuery(options),
         first: pageSize(options.first),
         after: options.after ?? null,
-      });
+      }, context);
       const root = expectRecord(data, "data");
       const connection = expectRecord(root.products, "data.products");
       return {
@@ -319,40 +331,61 @@ export function createProductDataAccess(executor: AdminGraphqlExecutor) {
     async getProductById(
       id: string,
       options: ProductDetailOptions = {},
+      context?: ShopifyRequestContext,
     ): Promise<Product | null> {
       const built = buildGetProductByIdQuery(options.metafields);
       const data = await executor<unknown>(built.query, {
         id: normalizeGid(id, "Product"),
-      });
+      }, context);
       const root = expectRecord(data, "data");
       return root.product === null
         ? null
         : parseProduct(root.product, "data.product", built.aliases);
     },
 
-    getProductBySku(sku: string): Promise<VariantLookupResult[]> {
-      return lookupVariants("sku", sku, executor);
+    getProductBySku(
+      sku: string,
+      context?: ShopifyRequestContext,
+    ): Promise<VariantLookupResult[]> {
+      return lookupVariants("sku", sku, executor, context);
     },
 
-    getProductByBarcode(barcode: string): Promise<VariantLookupResult[]> {
-      return lookupVariants("barcode", barcode, executor);
+    getProductByBarcode(
+      barcode: string,
+      context?: ShopifyRequestContext,
+    ): Promise<VariantLookupResult[]> {
+      return lookupVariants("barcode", barcode, executor, context);
     },
 
     async getInventoryForVariant(
       id: string,
       options: InventoryPageOptions = {},
+      context?: ShopifyRequestContext,
     ): Promise<InventoryForVariant | null> {
       const data = await executor<unknown>(GET_INVENTORY_FOR_VARIANT_QUERY, {
         id: normalizeGid(id, "ProductVariant"),
         first: inventoryPageSize(options.first),
         after: options.after ?? null,
-      });
+      }, context);
       const root = expectRecord(data, "data");
-      return root.productVariant === null
-        ? null
-        : { variant: parseVariant(root.productVariant, "data.productVariant") };
+      if (root.productVariant === null) return null;
+      const variant = parseVariant(root.productVariant, "data.productVariant");
+      return {state: inventoryResultState(variant), variant};
     },
   };
+}
+
+function inventoryResultState(
+  variant: ProductVariant,
+): InventoryForVariant["state"] {
+  const item = variant.inventoryItem;
+  if (item === null || !item.tracked) return "inventory_not_tracked";
+  if (item.levels.length === 0) return "no_inventory_levels";
+  const available = item.levels.flatMap(({quantities}) =>
+    quantities.filter(({name}) => name === "available").map(({quantity}) => quantity));
+  return available.some((quantity) => quantity > 0)
+    ? "found_with_inventory"
+    : "found_zero_inventory";
 }
 
 function inventoryPageSize(first: number | undefined): number {

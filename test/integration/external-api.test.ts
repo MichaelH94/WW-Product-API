@@ -578,6 +578,7 @@ test("retrieves paginated inventory for an identified variant", async () => {
   assertVariantSchema(payload.data.variant);
   assertRecord(payload.data.variant);
   assertRecord(payload.data.variant.inventoryItem);
+  assert.equal(payload.data.state, "found_with_inventory");
   const levels = payload.data.variant.inventoryItem.levels as Array<Record<string, unknown>>;
   assert.equal(levels.length, 2);
   assert.deepEqual(levels[0]?.quantities, [
@@ -686,8 +687,6 @@ test("maps Shopify upstream failures without leaking response bodies or causes",
       assert.equal(response.headers.get("retry-after"), "1");
       assert.deepEqual(payload.error.details, {
         retryable: true,
-        shopifyCodes: ["THROTTLED"],
-        shopifyRequestIds: ["shopify-integration-request"],
       });
     }
   }

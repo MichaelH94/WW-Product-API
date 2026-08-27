@@ -618,8 +618,16 @@ components:
     VariantInventoryData:
       type: object
       additionalProperties: false
-      required: [variant]
+      required: [state, variant]
       properties:
+        state:
+          type: string
+          enum:
+            - found_with_inventory
+            - found_zero_inventory
+            - inventory_not_tracked
+            - no_inventory_levels
+          description: Exact inventory outcome for the returned variant and page of locations.
         variant:
           $ref: '#/components/schemas/ProductVariant'
     VariantInventoryResponse:
@@ -635,8 +643,9 @@ components:
       type: object
       additionalProperties: false
       description: >-
-        Sanitized diagnostic metadata such as retryability, upstream status,
-        Shopify error codes, or Shopify request IDs. Never contains credentials.
+        Sanitized diagnostic metadata such as retryability, result state,
+        upstream status, or invalid parameter names. Never contains credentials
+        or Shopify-internal error and request details.
       properties:
         retryable:
           type: boolean
@@ -646,20 +655,10 @@ components:
           minimum: 100
           maximum: 599
           description: Sanitized HTTP status returned by Shopify, when available.
-        shopifyCodes:
-          type: array
-          uniqueItems: true
-          description: Sanitized Shopify GraphQL error codes.
-          items:
-            type: string
-            pattern: '^[A-Z0-9_]{1,64}$'
-        shopifyRequestIds:
-          type: array
-          uniqueItems: true
-          description: Shopify request IDs useful for support diagnostics.
-          items:
-            type: string
-            pattern: '^[A-Za-z0-9-]{1,128}$'
+        state:
+          type: string
+          enum: [product_not_found, temporary_upstream_failure]
+          description: Machine-readable not-found or temporary-failure outcome when applicable.
         parameters:
           type: array
           uniqueItems: true
@@ -682,6 +681,7 @@ components:
             - SHOPIFY_UPSTREAM_ERROR
             - SHOPIFY_THROTTLED
             - SHOPIFY_TIMEOUT
+            - TEMPORARY_UPSTREAM_FAILURE
         message:
           type: string
         details:
@@ -749,7 +749,7 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     ShopifyThrottled:
-      description: Shopify temporarily throttled the read request. Wait before retrying.
+      description: Shopify temporarily failed or throttled the read request. Wait before retrying.
       headers:
         Retry-After:
           description: Number of seconds to wait before retrying.

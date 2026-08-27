@@ -5,6 +5,7 @@ import {
   ShopifyAdminApiError,
   ShopifyAdminGraphqlError,
   ShopifyAdminHttpError,
+  ShopifyAdminRetryExhaustedError,
   ShopifyAdminTimeoutError,
 } from "../../shared/shopify/admin.ts";
 import {handleApiRequest, type ProductApiDataAccess} from "../../server/api.ts";
@@ -248,7 +249,9 @@ test("returns stable not-found, method, and sanitized upstream errors", async ()
     internalApiKey: API_KEY,
   });
   assert.equal(missing.status, 404);
-  assert.equal((await missing.json()).error.code, "NOT_FOUND");
+  const missingBody = await missing.json();
+  assert.equal(missingBody.error.code, "NOT_FOUND");
+  assert.equal(missingBody.error.details.state, "product_not_found");
 
   const method = await handleApiRequest(request("/api/products/search?q=x", {method: "POST"}), {
     dataAccess: dataAccess(),
@@ -301,7 +304,7 @@ test("maps Shopify HTTP and GraphQL throttling to retryable sanitized errors", a
   assert.equal(graphqlThrottle.status, 503);
   assert.equal(graphqlThrottle.headers.get("retry-after"), "1");
   assert.match(graphqlText, /THROTTLED/);
-  assert.match(graphqlText, /shopify-request-123/);
+  assert.doesNotMatch(graphqlText, /shopify-request-123/);
   assert.doesNotMatch(graphqlText, /secret diagnostic text/);
 });
 
@@ -319,6 +322,33 @@ test("maps upstream timeouts to a retryable 504 without leaking causes", async (
   assert.match(body, /SHOPIFY_TIMEOUT/);
   assert.match(body, /"retryable":true/);
   assert.doesNotMatch(body, /secret timeout cause/);
+});
+
+test("maps exhausted transient retries to a sanitized temporary state", async () => {
+  const response = await handleApiRequest(request("/api/products/search?q=x"), {
+    dataAccess: dataAccess({
+      searchProducts: async () => {
+        throw new ShopifyAdminRetryExhaustedError({
+          category: "graphql_internal_server_error",
+          attempts: 3,
+          lastError: new ShopifyAdminGraphqlError([{
+            message: "secret upstream failure",
+            extensions: {
+              code: "INTERNAL_SERVER_ERROR",
+              requestId: "internal-shopify-request-id",
+            },
+          }]),
+          shopifyRequestIds: ["internal-shopify-request-id"],
+        });
+      },
+    }),
+    internalApiKey: API_KEY,
+  });
+  const body = JSON.stringify(await response.json());
+  assert.equal(response.status, 503);
+  assert.match(body, /TEMPORARY_UPSTREAM_FAILURE/);
+  assert.match(body, /temporary_upstream_failure/);
+  assert.doesNotMatch(body, /secret upstream failure|internal-shopify-request-id/);
 });
 
 test("client-credentials tokens are cached and used only in Shopify headers", async () => {
@@ -357,6 +387,7 @@ test("server-side Shopify GraphQL calls have a bounded timeout", async () => {
     shopDomain: "example.myshopify.com",
     getAccessToken: async () => "token",
     timeoutMs: 5,
+    sleep: async () => {},
     fetcher: async (_url, init) => new Promise((_resolve, reject) => {
       init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {once: true});
     }),
@@ -364,7 +395,7 @@ test("server-side Shopify GraphQL calls have a bounded timeout", async () => {
 
   await assert.rejects(
     () => executor("query Shop { shop { id } }"),
-    ShopifyAdminTimeoutError,
+    ShopifyAdminRetryExhaustedError,
   );
 });
 
