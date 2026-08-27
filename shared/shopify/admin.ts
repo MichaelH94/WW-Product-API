@@ -12,6 +12,12 @@ export type FetchLike = (
   init?: RequestInit,
 ) => Promise<Response>;
 
+export type ShopifyGraphqlCostDebug = Record<string, unknown>;
+
+export interface AdminGraphqlExecutorOptions {
+  onCostDebug?: (cost: ShopifyGraphqlCostDebug) => void;
+}
+
 export interface GraphqlErrorDetail {
   message: string;
   path?: ReadonlyArray<string | number>;
@@ -92,6 +98,7 @@ function isTimeoutError(value: unknown): boolean {
 export function createAdminGraphqlExecutor(
   fetcher: FetchLike,
   endpoint = "",
+  options: AdminGraphqlExecutorOptions = {},
 ): AdminGraphqlExecutor {
   return async function executeAdminGraphql<T>(
     query: string,
@@ -140,6 +147,11 @@ export function createAdminGraphqlExecutor(
       throw new ShopifyAdminResponseError(
         "Shopify Admin API returned an invalid response envelope",
       );
+    }
+
+    const extensions = isRecord(payload.extensions) ? payload.extensions : null;
+    if (options.onCostDebug && extensions && isRecord(extensions.cost)) {
+      options.onCostDebug(extensions.cost);
     }
 
     const errors = parseGraphqlErrors(payload.errors);

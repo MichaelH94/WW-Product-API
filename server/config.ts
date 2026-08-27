@@ -8,6 +8,7 @@ export interface ApiConfig {
   clientSecret: string;
   internalApiKey: string;
   port: number;
+  graphqlCostDebug: boolean;
 }
 
 function required(environment: NodeJS.ProcessEnv, names: string[]): string {
@@ -39,5 +40,6 @@ export function loadApiConfig(environment: NodeJS.ProcessEnv = process.env): Api
     clientSecret: required(environment, ["SHOPIFY_CLIENT_SECRET", "SHOPIFY_API_SECRET"]),
     internalApiKey,
     port,
+    graphqlCostDebug: environment.SHOPIFY_GRAPHQL_COST_DEBUG === "1",
   };
 }

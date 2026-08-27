@@ -11,6 +11,14 @@ const getAccessToken = createClientCredentialsTokenProvider(config);
 const executor = createServerAdminGraphqlExecutor({
   shopDomain: config.shopDomain,
   getAccessToken,
+  ...(config.graphqlCostDebug
+    ? {
+        costDebug: true,
+        onCostDebug: (cost: Record<string, unknown>) => {
+          console.debug("Shopify GraphQL cost", JSON.stringify(cost));
+        },
+      }
+    : {}),
 });
 const dataAccess = createProductDataAccess(executor);
 

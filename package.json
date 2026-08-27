@@ -12,7 +12,7 @@
     "build:worker": "wrangler deploy --dry-run --outdir dist/worker",
     "test": "node --test test/shopify/*.test.ts test/integration/*.test.ts test/worker/*.test.ts",
     "dev:api": "node --experimental-strip-types --watch server/server.ts",
-    "dev:worker": "wrangler dev",
+    "dev:worker": "wrangler dev --var SHOPIFY_GRAPHQL_COST_DEBUG:1",
     "dev": "shopify app dev",
     "info": "shopify app info",
     "generate": "shopify app generate",

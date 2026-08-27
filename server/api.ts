@@ -14,7 +14,7 @@ export interface ProductApiDataAccess {
     productType?: string;
     after?: string;
     first: number;
-    includeInventoryLevels: true;
+    includeInventoryLevels: false;
   }): Promise<ProductSearchResult>;
   getProductBySku(sku: string): Promise<VariantLookupResult[]>;
   getProductByBarcode(barcode: string): Promise<VariantLookupResult[]>;
@@ -231,7 +231,7 @@ export async function handleApiRequest(
         ...(productType === undefined ? {} : {productType}),
         ...(after === undefined ? {} : {after}),
         first: limit(url.searchParams.get("limit")),
-        includeInventoryLevels: true,
+        includeInventoryLevels: false,
       });
       return success(result, requestId);
     }

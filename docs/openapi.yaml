@@ -28,9 +28,9 @@ paths:
       operationId: getHealth
       summary: Check API health
       description: >-
-        Use only to confirm that the API is reachable or to diagnose a failed
-        tool call. Returns service status and the Shopify Admin API version,
-        but no product or store data.
+        Use only to confirm API reachability or diagnose a failed tool call.
+        Returns service status and the Shopify Admin API version, but no
+        product or store data.
       responses:
         '200':
           description: The API is running and its Worker bindings are valid.
@@ -52,13 +52,11 @@ paths:
       operationId: searchProducts
       summary: Search products
       description: >-
-        Use for product discovery by title or other free text, vendor, product
-        type, or a combination of those filters. Do not use this operation when
-        an exact SKU or barcode is available; select the corresponding exact
-        lookup operation instead. Supply at least one of q, vendor, or
-        productType. To continue a result set, pass pageInfo.endCursor unchanged
-        as after. Results include IDs for follow-up detail calls, variants,
-        exact SKU and barcode values, price strings, and inventory by location.
+        Use for discovery by title or free text, vendor, product type, or
+        combined filters. If an exact SKU or barcode is known, use its exact
+        lookup. Supply q, vendor, or productType. Pass pageInfo.endCursor
+        unchanged as after for the next page. Use product detail for complete
+        variants and inventory.
       parameters:
         - name: q
           in: query
@@ -133,10 +131,10 @@ paths:
       operationId: findProductsBySku
       summary: Find variants by SKU
       description: >-
-        Use when the caller provides a complete SKU and needs the associated
-        variant, parent product, price, or inventory. Matching is exact. Shopify
-        does not guarantee SKU uniqueness, so data is always an array. An empty
-        array means no variant matched and is not an API error.
+        Use when an exact SKU is known. Returns lightweight matching variants
+        and parent product IDs for a follow-up product detail call. SKUs are
+        not guaranteed unique, so data is always an array. An empty array means
+        no match, not an API error.
       parameters:
         - name: sku
           in: path
@@ -173,11 +171,10 @@ paths:
       operationId: findProductsByBarcode
       summary: Find variants by barcode
       description: >-
-        Use when the caller provides a complete barcode and needs the associated
-        variant, parent product, price, or inventory. Matching is exact and
-        leading zeroes must be preserved. Shopify does not guarantee barcode
-        uniqueness, so data is always an array. An empty array means no variant
-        matched and is not an API error.
+        Use when an exact barcode is known. Returns lightweight matching
+        variants and parent product IDs for a follow-up product detail call.
+        Preserve leading zeroes. Barcodes are not guaranteed unique. An empty
+        array means no match, not an API error.
       parameters:
         - name: barcode
           in: path
@@ -214,10 +211,9 @@ paths:
       operationId: getProductById
       summary: Get one product by ID
       description: >-
-        Use for a follow-up request when a product ID is already known from a
-        search, SKU lookup, or barcode lookup. Returns detailed product,
-        variant, selected-option, price, inventory, and location information.
-        Do not use this operation to search by title, SKU, or barcode.
+        Use only when a product ID is known from search, SKU lookup, or barcode
+        lookup. Returns product details, variants, selected options, prices,
+        inventory, and locations. Do not use for title, SKU, or barcode search.
       parameters:
         - name: id
           in: path
@@ -521,10 +517,39 @@ components:
           $ref: '#/components/schemas/ResponseMeta'
     ErrorDetail:
       type: object
-      additionalProperties: true
+      additionalProperties: false
       description: >-
         Sanitized diagnostic metadata such as retryability, upstream status,
         Shopify error codes, or Shopify request IDs. Never contains credentials.
+      properties:
+        retryable:
+          type: boolean
+          description: Whether retrying the request may succeed.
+        upstreamStatus:
+          type: integer
+          minimum: 100
+          maximum: 599
+          description: Sanitized HTTP status returned by Shopify, when available.
+        shopifyCodes:
+          type: array
+          uniqueItems: true
+          description: Sanitized Shopify GraphQL error codes.
+          items:
+            type: string
+            pattern: '^[A-Z0-9_]{1,64}$'
+        shopifyRequestIds:
+          type: array
+          uniqueItems: true
+          description: Shopify request IDs useful for support diagnostics.
+          items:
+            type: string
+            pattern: '^[A-Za-z0-9-]{1,128}$'
+        parameters:
+          type: array
+          uniqueItems: true
+          description: Unsupported query parameter names supplied by the caller.
+          items:
+            type: string
     ErrorBody:
       type: object
       additionalProperties: false

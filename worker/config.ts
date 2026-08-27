@@ -5,6 +5,7 @@ export interface WorkerEnvironment {
   SHOPIFY_CLIENT_ID: string;
   SHOPIFY_CLIENT_SECRET: string;
   INTERNAL_API_KEY: string;
+  SHOPIFY_GRAPHQL_COST_DEBUG?: string;
 }
 
 export interface WorkerConfig {
@@ -12,6 +13,7 @@ export interface WorkerConfig {
   clientId: string;
   clientSecret: string;
   internalApiKey: string;
+  graphqlCostDebug: boolean;
 }
 
 function required(
@@ -36,5 +38,6 @@ export function loadWorkerConfig(
     clientId: required(environment, "SHOPIFY_CLIENT_ID"),
     clientSecret: required(environment, "SHOPIFY_CLIENT_SECRET"),
     internalApiKey,
+    graphqlCostDebug: environment.SHOPIFY_GRAPHQL_COST_DEBUG === "1",
   };
 }

@@ -25,7 +25,6 @@ export type ProductSearchField =
 interface ProductSearchPageOptions {
   first?: number;
   after?: string;
-  metafields?: ReadonlyArray<MetafieldSelector>;
   includeInventoryLevels?: boolean;
 }
 
@@ -75,6 +74,11 @@ const VARIANT_FIELDS = `
   price
   selectedOptions { name value }`;
 
+export const SEARCH_VARIANT_LIMIT = 3;
+export const VARIANT_LOOKUP_LIMIT = 25;
+export const PRODUCT_DETAIL_VARIANT_LIMIT = 10;
+export const INVENTORY_LEVEL_LIMIT = 20;
+
 const INVENTORY_ITEM_SUMMARY = `
   inventoryItem {
     id
@@ -85,7 +89,7 @@ const INVENTORY_ITEM_WITH_LEVELS = `
   inventoryItem {
     id
     tracked
-    inventoryLevels(first: 100) {
+    inventoryLevels(first: ${INVENTORY_LEVEL_LIMIT}) {
       nodes {
         id
         location { id name }
@@ -170,24 +174,21 @@ function pageSize(first: number | undefined): number {
 }
 
 export function buildSearchProductsQuery(
-  metafields: ReadonlyArray<MetafieldSelector> = [],
   includeInventoryLevels = false,
 ): { query: string; aliases: string[] } {
-  const selection = metafieldSelection(metafields);
   const inventorySelection = includeInventoryLevels
     ? INVENTORY_ITEM_WITH_LEVELS
     : INVENTORY_ITEM_SUMMARY;
   return {
-    aliases: selection.aliases,
+    aliases: [],
     query: `query SearchProducts($query: String!, $first: Int!, $after: String) {
       products(first: $first, after: $after, query: $query) {
         nodes {
           ${PRODUCT_FIELDS}
-          variants(first: 25) {
+          variants(first: ${SEARCH_VARIANT_LIMIT}) {
             nodes { ${VARIANT_FIELDS} ${inventorySelection} }
             pageInfo { hasNextPage endCursor }
           }
-          ${selection.query}
         }
         pageInfo { hasNextPage endCursor }
       }
@@ -204,7 +205,7 @@ export function buildGetProductByIdQuery(
     query: `query GetProductById($id: ID!) {
       product(id: $id) {
         ${PRODUCT_FIELDS}
-        variants(first: 100) {
+        variants(first: ${PRODUCT_DETAIL_VARIANT_LIMIT}) {
           nodes { ${VARIANT_FIELDS} ${INVENTORY_ITEM_WITH_LEVELS} }
           pageInfo { hasNextPage endCursor }
         }
@@ -222,7 +223,7 @@ export const LOOKUP_PRODUCT_VARIANTS_QUERY = `query LookupProductVariants(
   productVariants(first: $first, after: $after, query: $query) {
     nodes {
       ${VARIANT_FIELDS}
-      ${INVENTORY_ITEM_WITH_LEVELS}
+      ${INVENTORY_ITEM_SUMMARY}
       product { ${PRODUCT_FIELDS} }
     }
     pageInfo { hasNextPage endCursor }
@@ -253,7 +254,7 @@ async function lookupVariants(
 ): Promise<VariantLookupResult[]> {
   const data = await executor<unknown>(LOOKUP_PRODUCT_VARIANTS_QUERY, {
     query: `${field}:${quoteSearchValue(value)}`,
-    first: 100,
+    first: VARIANT_LOOKUP_LIMIT,
     after: null,
   });
   const root = expectRecord(data, "data");
@@ -272,7 +273,6 @@ export function createProductDataAccess(executor: AdminGraphqlExecutor) {
   return {
     async searchProducts(options: ProductSearchOptions): Promise<ProductSearchResult> {
       const built = buildSearchProductsQuery(
-        options.metafields,
         options.includeInventoryLevels,
       );
       const data = await executor<unknown>(built.query, {

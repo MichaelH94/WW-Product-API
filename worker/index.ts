@@ -17,6 +17,7 @@ export interface WorkerHandlerOptions {
   now?: () => number;
   tokenTimeoutMs?: number;
   adminTimeoutMs?: number;
+  onCostDebug?: (cost: Record<string, unknown>) => void;
 }
 
 function internalConfigurationError(): Response {
@@ -67,6 +68,15 @@ export function createWorkerHandler(options: WorkerHandlerOptions = {}) {
           ...(options.fetcher ? {fetcher: options.fetcher} : {}),
           ...(options.adminTimeoutMs
             ? {timeoutMs: options.adminTimeoutMs}
+            : {}),
+          ...(config.graphqlCostDebug
+            ? {
+                costDebug: true,
+                onCostDebug: options.onCostDebug ??
+                  ((cost: Record<string, unknown>) => {
+                    console.debug("Shopify GraphQL cost", JSON.stringify(cost));
+                  }),
+              }
             : {}),
         });
         runtime = {

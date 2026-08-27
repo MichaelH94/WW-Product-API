@@ -117,7 +117,6 @@ test("builds an escaped field-specific product search and parses summary invento
     field: "title",
     value: 'Blue "Shirt" \\ Classic',
     first: 10,
-    metafields: [{ namespace: "custom", key: "material" }],
   });
 
   assert.equal(variables?.query, 'title:"Blue \\"Shirt\\" \\\\ Classic"');
@@ -144,7 +143,8 @@ test("lists products without a filter and can include inventory levels", async (
 
   assert.equal(variables?.query, "");
   assert.equal(variables?.first, 10);
-  assert.match(query, /inventoryLevels\(first: 100\)/);
+  assert.match(query, /variants\(first: 3\)/);
+  assert.match(query, /inventoryLevels\(first: 20\)/);
   assert.equal(
     result.products[0]?.variants[0]?.inventoryItem?.levels[0]?.location.name,
     "Main",
@@ -193,6 +193,7 @@ test("SKU and barcode lookups return every matching variant with its product", a
   ]);
   assert.equal(bySku[0]?.product.id, "gid://shopify/Product/10");
   assert.equal(byBarcode[0]?.variant.barcode, "0123456789012");
+  assert.doesNotMatch(LOOKUP_PRODUCT_VARIANTS_QUERY, /inventoryLevels/);
 });
 
 test("gets inventory by numeric variant ID and returns null when absent", async () => {
@@ -245,7 +246,7 @@ test("rejects invalid IDs, pagination, metafield selectors, and response shapes"
 
 test("all data-access operations are GraphQL queries, never mutations", () => {
   const operations = [
-    buildSearchProductsQuery([{ namespace: "custom", key: "material" }]).query,
+    buildSearchProductsQuery().query,
     buildGetProductByIdQuery([{ namespace: "custom", key: "material" }]).query,
     LOOKUP_PRODUCT_VARIANTS_QUERY,
     GET_INVENTORY_FOR_VARIANT_QUERY,
@@ -256,6 +257,14 @@ test("all data-access operations are GraphQL queries, never mutations", () => {
     assert.match(operation, /^query\s/);
     assert.doesNotMatch(operation, /\bmutation\b/i);
   }
+});
+
+test("uses conservative connection limits for search, detail, and inventory", () => {
+  assert.match(buildSearchProductsQuery().query, /variants\(first: 3\)/);
+  assert.doesNotMatch(buildSearchProductsQuery().query, /inventoryLevels/);
+  assert.match(buildGetProductByIdQuery().query, /variants\(first: 10\)/);
+  assert.match(buildGetProductByIdQuery().query, /inventoryLevels\(first: 20\)/);
+  assert.match(GET_INVENTORY_FOR_VARIANT_QUERY, /inventoryLevels\(first: 20\)/);
 });
 
 test("recognizes only a confirmed partner development store", async () => {

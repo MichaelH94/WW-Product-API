@@ -76,6 +76,7 @@ test("Worker obtains a server-side token and caches it across API requests", asy
       );
       const headers = init?.headers as Record<string, string>;
       observedTokens.push(headers["X-Shopify-Access-Token"]);
+      assert.equal(headers["Shopify-GraphQL-Cost-Debug"], undefined);
       const operation = JSON.parse(String(init?.body)).query as string;
       assert.match(operation, /query SearchProducts/);
       assert.doesNotMatch(operation, /\bmutation\b/i);
@@ -101,6 +102,50 @@ test("Worker obtains a server-side token and caches it across API requests", asy
     "shopify-token-must-remain-server-side",
     "shopify-token-must-remain-server-side",
   ]);
+});
+
+test("Worker enables cost diagnostics only when requested and never returns them", async () => {
+  let observedHeader: string | undefined;
+  let observedCost: Record<string, unknown> | undefined;
+  const handler = createWorkerHandler({
+    onCostDebug: (cost) => {
+      observedCost = cost;
+    },
+    fetcher: async (url, init) => {
+      if (url.endsWith("/admin/oauth/access_token")) {
+        return Response.json({access_token: "server-only-token", expires_in: 86399});
+      }
+
+      observedHeader = (init?.headers as Record<string, string>)[
+        "Shopify-GraphQL-Cost-Debug"
+      ];
+      return Response.json({
+        data: {
+          products: {
+            nodes: [],
+            pageInfo: {hasNextPage: false, endCursor: null},
+          },
+        },
+        extensions: {
+          cost: {
+            requestedQueryCost: 42,
+            fields: [{path: ["products"], requestedTotalCost: 42}],
+          },
+        },
+      });
+    },
+  });
+
+  const response = await handler(
+    request("/api/products/search?q=snowboards"),
+    {...ENVIRONMENT, SHOPIFY_GRAPHQL_COST_DEBUG: "1"},
+  );
+  const body = JSON.stringify(await response.json());
+
+  assert.equal(response.status, 200);
+  assert.equal(observedHeader, "1");
+  assert.equal(observedCost?.requestedQueryCost, 42);
+  assert.doesNotMatch(body, /requestedQueryCost|requestedTotalCost|fields/);
 });
 
 test("client-credentials cache refreshes before Shopify token expiry", async () => {

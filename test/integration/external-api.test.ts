@@ -93,12 +93,14 @@ type GraphqlObservation = {
 };
 
 const observations: GraphqlObservation[] = [];
+let lastSearchDocument = "";
 
 const shopifyExecutor: AdminGraphqlExecutor = async <TData>(
   query: string,
   variables: Record<string, unknown> = {},
 ) => {
   if (query.includes("SearchProducts")) {
+    lastSearchDocument = query;
     observations.push({operation: "SearchProducts", variables});
     const searchQuery = String(variables.query ?? "");
 
@@ -369,10 +371,10 @@ test("requires a valid bearer credential without affecting health", async () => 
   });
 });
 
-test("searches products and normalizes filters at the HTTP boundary", async () => {
+test('broad "snowboards" search is lightweight and normalized', async () => {
   observations.length = 0;
   const response = await request(
-    "/api/products/search?q=%20blue%20shirt%20&vendor=%20Acme%20&productType=Shirts&limit=10",
+    "/api/products/search?q=%20snowboards%20&limit=10",
   );
   assert.equal(response.status, 200);
   const payload = await readJson(response);
@@ -382,11 +384,13 @@ test("searches products and normalizes filters at the HTTP boundary", async () =
   assert.ok(Array.isArray(payload.data.products));
   assert.equal(payload.data.products.length, 1);
   assertProductSchema(payload.data.products[0]);
+  assert.match(lastSearchDocument, /variants\(first: 3\)/);
+  assert.doesNotMatch(lastSearchDocument, /inventoryLevels/);
 
   assert.deepEqual(observations.at(-1), {
     operation: "SearchProducts",
     variables: {
-      query: '"blue shirt" vendor:"Acme" product_type:"Shirts"',
+      query: '"snowboards"',
       first: 10,
       after: null,
     },
@@ -406,7 +410,7 @@ test("performs exact SKU lookup and preserves the SKU", async () => {
   assert.equal(payload.data[0].variant.sku, "SKU-001");
   assert.deepEqual(observations.at(-1), {
     operation: "LookupProductVariants",
-    variables: {query: 'sku:"SKU-001"', first: 100, after: null},
+    variables: {query: 'sku:"SKU-001"', first: 25, after: null},
   });
 });
 
@@ -426,7 +430,7 @@ test("performs exact barcode lookup without losing leading zeroes", async () => 
   );
   assert.deepEqual(observations.at(-1), {
     operation: "LookupProductVariants",
-    variables: {query: 'barcode:"0012345678905"', first: 100, after: null},
+    variables: {query: 'barcode:"0012345678905"', first: 25, after: null},
   });
 });
 

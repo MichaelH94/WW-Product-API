@@ -113,7 +113,7 @@ test("search normalizes filters, caps limits, and rejects unknown parameters", a
     vendor: "Acme",
     productType: "Shirts",
     first: 25,
-    includeInventoryLevels: true,
+    includeInventoryLevels: false,
   });
 
   for (const path of [
@@ -150,7 +150,7 @@ test("search defaults to 10 and validates opaque pagination cursors", async () =
     q: "shirt",
     after: "eyJsYXN0X2lkIjoxMjN9",
     first: 10,
-    includeInventoryLevels: true,
+    includeInventoryLevels: false,
   });
 
   for (const path of [

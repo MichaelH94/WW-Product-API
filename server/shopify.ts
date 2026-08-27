@@ -94,6 +94,8 @@ export function createShopifyAdminGraphqlExecutor(options: {
   };
   fetcher?: FetchLike;
   timeoutMs?: number;
+  costDebug?: boolean;
+  onCostDebug?: (cost: Record<string, unknown>) => void;
 }): AdminGraphqlExecutor {
   const fetcher = options.fetcher ?? globalThis.fetch.bind(globalThis);
   const endpoint = `https://${options.shopDomain}/admin/api/${ADMIN_API_VERSION}/graphql.json`;
@@ -108,6 +110,9 @@ export function createShopifyAdminGraphqlExecutor(options: {
       headers: {
         ...(init?.headers as Record<string, string> | undefined),
         "X-Shopify-Access-Token": accessToken,
+        ...(options.costDebug
+          ? {"Shopify-GraphQL-Cost-Debug": "1"}
+          : {}),
       },
     });
 
@@ -121,7 +126,7 @@ export function createShopifyAdminGraphqlExecutor(options: {
     }
 
     return response;
-  }, endpoint);
+  }, endpoint, {onCostDebug: options.onCostDebug});
 }
 
 // Retain the Node entry point's existing import while the shared transport is
