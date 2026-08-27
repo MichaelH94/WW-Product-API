@@ -148,6 +148,83 @@ test("Worker enables cost diagnostics only when requested and never returns them
   assert.doesNotMatch(body, /requestedQueryCost|requestedTotalCost|fields/);
 });
 
+test("Worker exposes authenticated read-only inventory by variant and location", async () => {
+  const handler = createWorkerHandler({
+    fetcher: async (url, init) => {
+      if (url.endsWith("/admin/oauth/access_token")) {
+        return Response.json({access_token: "server-only-token", expires_in: 86399});
+      }
+
+      const body = JSON.parse(String(init?.body));
+      assert.match(body.query, /^query GetInventoryForVariant/);
+      assert.doesNotMatch(body.query, /\bmutation\b/i);
+      assert.match(body.query, /quantities\(names: \["available", "on_hand", "incoming"\]\)/);
+      assert.deepEqual(body.variables, {
+        id: "gid://shopify/ProductVariant/20",
+        first: 50,
+        after: null,
+      });
+      return Response.json({
+        data: {
+          productVariant: {
+            id: "gid://shopify/ProductVariant/20",
+            title: "Blue / Large",
+            sku: "SKU-001",
+            barcode: "0012345678905",
+            price: "19.95",
+            selectedOptions: [],
+            inventoryItem: {
+              id: "gid://shopify/InventoryItem/30",
+              tracked: true,
+              inventoryLevels: {
+                nodes: [{
+                  id: "gid://shopify/InventoryLevel/40?inventory_item_id=30",
+                  location: {
+                    id: "gid://shopify/Location/50",
+                    name: "Main warehouse",
+                    isActive: true,
+                    address: {
+                      address1: "100 Main Street",
+                      address2: null,
+                      city: "Chicago",
+                      province: "Illinois",
+                      provinceCode: "IL",
+                      country: "United States",
+                      countryCode: "US",
+                      zip: "60601",
+                      phone: null,
+                    },
+                  },
+                  quantities: [
+                    {name: "available", quantity: 4},
+                    {name: "on_hand", quantity: 6},
+                    {name: "incoming", quantity: 2},
+                  ],
+                }],
+                pageInfo: {hasNextPage: false, endCursor: null},
+              },
+            },
+          },
+        },
+      });
+    },
+  });
+
+  const response = await handler(
+    request("/api/variants/20/inventory?limit=50"),
+    ENVIRONMENT,
+  );
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.data.variant.inventoryItem.tracked, true);
+  assert.equal(payload.data.variant.inventoryItem.levels[0].location.active, true);
+  assert.deepEqual(payload.data.variant.inventoryItem.levels[0].quantities, [
+    {name: "available", quantity: 4},
+    {name: "on_hand", quantity: 6},
+    {name: "incoming", quantity: 2},
+  ]);
+});
+
 test("client-credentials cache refreshes before Shopify token expiry", async () => {
   let now = 1_000;
   let tokenRequests = 0;

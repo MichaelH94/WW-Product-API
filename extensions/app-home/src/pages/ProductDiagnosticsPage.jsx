@@ -1,7 +1,10 @@
 import {useEffect, useState} from 'preact/hooks';
 import {useLocation} from 'preact-iso';
 
-import {searchProducts} from '../../../../shared/shopify/products-direct.ts';
+import {
+  getProductById,
+  searchProducts,
+} from '../../../../shared/shopify/products-direct.ts';
 
 export default function ProductDiagnosticsPage({enabled = false}) {
   const {route} = useLocation();
@@ -11,9 +14,18 @@ export default function ProductDiagnosticsPage({enabled = false}) {
     if (!enabled) return;
 
     let active = true;
-    searchProducts({first: 10, includeInventoryLevels: true})
-      .then(({products}) => {
-        if (active) setState({loading: false, products, error: null});
+    searchProducts({first: 10})
+      .then(async ({products}) => {
+        const detailedProducts = await Promise.all(
+          products.map(({id}) => getProductById(id)),
+        );
+        if (active) {
+          setState({
+            loading: false,
+            products: detailedProducts.filter(Boolean),
+            error: null,
+          });
+        }
       })
       .catch((error) => {
         if (active) {
@@ -39,7 +51,8 @@ export default function ProductDiagnosticsPage({enabled = false}) {
         <s-paragraph>
           This authenticated read-only view is enabled only in development
           builds on a confirmed partner development store. It displays up to 10
-          products from the connected store.
+          products from the connected store. Product search is lightweight;
+          inventory is fetched only after each product is identified.
         </s-paragraph>
       </s-section>
 

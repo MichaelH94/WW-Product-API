@@ -18,6 +18,10 @@ must be installed on the store. Its released app version must contain only the
 read scopes needed by this service. The current local configuration contains no
 Shopify write scopes.
 
+Inventory access uses `read_products`, `read_inventory`, and `read_locations`.
+The location address fields selected by Admin GraphQL `2026-07` additionally
+require `read_markets_home`. All four are read-only scopes.
+
 Do not configure a static Shopify Admin API access token. The Worker exchanges
 the client ID and secret for a short-lived token, keeps it only in isolate
 memory, refreshes it before expiry, and retries once with a fresh token after a

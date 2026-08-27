@@ -24,10 +24,26 @@ function inventoryItem(withLevels = true) {
       inventoryLevels: {
         nodes: [{
           id: "gid://shopify/InventoryLevel/40?inventory_item_id=30",
-          location: { id: "gid://shopify/Location/50", name: "Main" },
+          location: {
+            id: "gid://shopify/Location/50",
+            name: "Main",
+            isActive: true,
+            address: {
+              address1: "123 Warehouse Way",
+              address2: null,
+              city: "Chicago",
+              province: "Illinois",
+              provinceCode: "IL",
+              country: "United States",
+              countryCode: "US",
+              zip: "60601",
+              phone: null,
+            },
+          },
           quantities: [
             { name: "available", quantity: 7 },
             { name: "on_hand", quantity: 9 },
+            { name: "incoming", quantity: 2 },
           ],
         }],
         pageInfo,
@@ -92,7 +108,27 @@ test("parses product detail, variants, inventory, locations, and metafields", as
   assert.deepEqual(result?.variants[0]?.inventoryItem?.levels[0]?.quantities, [
     { name: "available", quantity: 7 },
     { name: "on_hand", quantity: 9 },
+    { name: "incoming", quantity: 2 },
   ]);
+  assert.deepEqual(
+    result?.variants[0]?.inventoryItem?.levels[0]?.location,
+    {
+      id: "gid://shopify/Location/50",
+      name: "Main",
+      active: true,
+      address: {
+        address1: "123 Warehouse Way",
+        address2: null,
+        city: "Chicago",
+        province: "Illinois",
+        provinceCode: "IL",
+        country: "United States",
+        countryCode: "US",
+        zip: "60601",
+        phone: null,
+      },
+    },
+  );
   assert.deepEqual(result?.metafields, [{
     namespace: "custom",
     key: "material",
@@ -125,30 +161,26 @@ test("builds an escaped field-specific product search and parses summary invento
   assert.deepEqual(result.pageInfo, { hasNextPage: true, endCursor: "cursor-1" });
 });
 
-test("lists products without a filter and can include inventory levels", async () => {
+test("lists products without attaching inventory levels to broad results", async () => {
   let query = "";
   let variables: Record<string, unknown> | undefined;
   const api = createProductDataAccess(async <T>(operation: string, input = {}) => {
     query = operation;
     variables = input;
     return {
-      products: { nodes: [product()], pageInfo },
+      products: { nodes: [product(false)], pageInfo },
     } as T;
   });
 
   const result = await api.searchProducts({
     first: 10,
-    includeInventoryLevels: true,
   });
 
   assert.equal(variables?.query, "");
   assert.equal(variables?.first, 10);
   assert.match(query, /variants\(first: 3\)/);
-  assert.match(query, /inventoryLevels\(first: 20\)/);
-  assert.equal(
-    result.products[0]?.variants[0]?.inventoryItem?.levels[0]?.location.name,
-    "Main",
-  );
+  assert.doesNotMatch(query, /inventoryLevels/);
+  assert.deepEqual(result.products[0]?.variants[0]?.inventoryItem?.levels, []);
 });
 
 test("combines normalized free-text, vendor, and product-type search filters", async () => {
@@ -198,13 +230,18 @@ test("SKU and barcode lookups return every matching variant with its product", a
 
 test("gets inventory by numeric variant ID and returns null when absent", async () => {
   const ids: unknown[] = [];
+  const variables: Record<string, unknown>[] = [];
   let found = true;
   const api = createProductDataAccess(async <T>(_query: string, input = {}) => {
     ids.push(input.id);
+    variables.push(input);
     return { productVariant: found ? variant() : null } as T;
   });
 
-  const result = await api.getInventoryForVariant("20");
+  const result = await api.getInventoryForVariant("20", {
+    first: 12,
+    after: "inventory-cursor",
+  });
   found = false;
   const missing = await api.getInventoryForVariant("gid://shopify/ProductVariant/21");
 
@@ -212,6 +249,13 @@ test("gets inventory by numeric variant ID and returns null when absent", async 
     "gid://shopify/ProductVariant/20",
     "gid://shopify/ProductVariant/21",
   ]);
+  assert.deepEqual(variables[0], {
+    id: "gid://shopify/ProductVariant/20",
+    first: 12,
+    after: "inventory-cursor",
+  });
+  assert.equal(variables[1]?.first, 20);
+  assert.equal(variables[1]?.after, null);
   assert.equal(result?.variant.inventoryItem?.levels[0]?.quantities[0]?.quantity, 7);
   assert.equal(missing, null);
 });
@@ -228,6 +272,10 @@ test("rejects invalid IDs, pagination, metafield selectors, and response shapes"
   );
   await assert.rejects(
     () => api.searchProducts({ field: "vendor", value: "Acme", first: 101 }),
+    RangeError,
+  );
+  await assert.rejects(
+    () => api.getInventoryForVariant("20", {first: 51}),
     RangeError,
   );
   await assert.rejects(
@@ -263,8 +311,21 @@ test("uses conservative connection limits for search, detail, and inventory", ()
   assert.match(buildSearchProductsQuery().query, /variants\(first: 3\)/);
   assert.doesNotMatch(buildSearchProductsQuery().query, /inventoryLevels/);
   assert.match(buildGetProductByIdQuery().query, /variants\(first: 10\)/);
-  assert.match(buildGetProductByIdQuery().query, /inventoryLevels\(first: 20\)/);
-  assert.match(GET_INVENTORY_FOR_VARIANT_QUERY, /inventoryLevels\(first: 20\)/);
+  assert.match(
+    buildGetProductByIdQuery().query,
+    /inventoryLevels\(first: 20, includeInactive: true\)/,
+  );
+  assert.match(
+    GET_INVENTORY_FOR_VARIANT_QUERY,
+    /inventoryLevels\(first: \$first, after: \$after, includeInactive: true\)/,
+  );
+  assert.match(GET_INVENTORY_FOR_VARIANT_QUERY, /isActive/);
+  assert.match(GET_INVENTORY_FOR_VARIANT_QUERY, /address\s*\{/);
+  assert.match(
+    GET_INVENTORY_FOR_VARIANT_QUERY,
+    /quantities\(names: \["available", "on_hand", "incoming"\]\)/,
+  );
+  assert.doesNotMatch(GET_INVENTORY_FOR_VARIANT_QUERY, /\n\s+available\s*\n/);
 });
 
 test("recognizes only a confirmed partner development store", async () => {

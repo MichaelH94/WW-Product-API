@@ -25,7 +25,6 @@ export type ProductSearchField =
 interface ProductSearchPageOptions {
   first?: number;
   after?: string;
-  includeInventoryLevels?: boolean;
 }
 
 export type ProductSearchOptions = ProductSearchPageOptions & (
@@ -57,6 +56,11 @@ export interface InventoryForVariant {
   variant: ProductVariant;
 }
 
+export interface InventoryPageOptions {
+  first?: number;
+  after?: string;
+}
+
 const PRODUCT_FIELDS = `
   id
   title
@@ -78,6 +82,7 @@ export const SEARCH_VARIANT_LIMIT = 3;
 export const VARIANT_LOOKUP_LIMIT = 25;
 export const PRODUCT_DETAIL_VARIANT_LIMIT = 10;
 export const INVENTORY_LEVEL_LIMIT = 20;
+export const MAX_INVENTORY_LEVEL_LIMIT = 50;
 
 const INVENTORY_ITEM_SUMMARY = `
   inventoryItem {
@@ -85,19 +90,43 @@ const INVENTORY_ITEM_SUMMARY = `
     tracked
   }`;
 
-const INVENTORY_ITEM_WITH_LEVELS = `
+function inventoryItemWithLevels(first: string, after = ""): string {
+  return `
   inventoryItem {
     id
     tracked
-    inventoryLevels(first: ${INVENTORY_LEVEL_LIMIT}) {
+    inventoryLevels(first: ${first}${after}, includeInactive: true) {
       nodes {
         id
-        location { id name }
-        quantities(names: ["available", "on_hand"]) { name quantity }
+        location {
+          id
+          name
+          isActive
+          address {
+            address1
+            address2
+            city
+            province
+            provinceCode
+            country
+            countryCode
+            zip
+            phone
+          }
+        }
+        quantities(names: ["available", "on_hand", "incoming"]) {
+          name
+          quantity
+        }
       }
       pageInfo { hasNextPage endCursor }
     }
   }`;
+}
+
+const INVENTORY_ITEM_WITH_LEVELS = inventoryItemWithLevels(
+  String(INVENTORY_LEVEL_LIMIT),
+);
 
 const SEARCH_FIELDS: Record<ProductSearchField, string> = {
   title: "title",
@@ -173,12 +202,7 @@ function pageSize(first: number | undefined): number {
   return value;
 }
 
-export function buildSearchProductsQuery(
-  includeInventoryLevels = false,
-): { query: string; aliases: string[] } {
-  const inventorySelection = includeInventoryLevels
-    ? INVENTORY_ITEM_WITH_LEVELS
-    : INVENTORY_ITEM_SUMMARY;
+export function buildSearchProductsQuery(): { query: string; aliases: string[] } {
   return {
     aliases: [],
     query: `query SearchProducts($query: String!, $first: Int!, $after: String) {
@@ -186,7 +210,7 @@ export function buildSearchProductsQuery(
         nodes {
           ${PRODUCT_FIELDS}
           variants(first: ${SEARCH_VARIANT_LIMIT}) {
-            nodes { ${VARIANT_FIELDS} ${inventorySelection} }
+            nodes { ${VARIANT_FIELDS} ${INVENTORY_ITEM_SUMMARY} }
             pageInfo { hasNextPage endCursor }
           }
         }
@@ -230,10 +254,14 @@ export const LOOKUP_PRODUCT_VARIANTS_QUERY = `query LookupProductVariants(
   }
 }`;
 
-export const GET_INVENTORY_FOR_VARIANT_QUERY = `query GetInventoryForVariant($id: ID!) {
+export const GET_INVENTORY_FOR_VARIANT_QUERY = `query GetInventoryForVariant(
+  $id: ID!
+  $first: Int!
+  $after: String
+) {
   productVariant(id: $id) {
     ${VARIANT_FIELDS}
-    ${INVENTORY_ITEM_WITH_LEVELS}
+    ${inventoryItemWithLevels("$first", ", after: $after")}
   }
 }`;
 
@@ -272,9 +300,7 @@ async function lookupVariants(
 export function createProductDataAccess(executor: AdminGraphqlExecutor) {
   return {
     async searchProducts(options: ProductSearchOptions): Promise<ProductSearchResult> {
-      const built = buildSearchProductsQuery(
-        options.includeInventoryLevels,
-      );
+      const built = buildSearchProductsQuery();
       const data = await executor<unknown>(built.query, {
         query: combinedSearchQuery(options),
         first: pageSize(options.first),
@@ -312,9 +338,14 @@ export function createProductDataAccess(executor: AdminGraphqlExecutor) {
       return lookupVariants("barcode", barcode, executor);
     },
 
-    async getInventoryForVariant(id: string): Promise<InventoryForVariant | null> {
+    async getInventoryForVariant(
+      id: string,
+      options: InventoryPageOptions = {},
+    ): Promise<InventoryForVariant | null> {
       const data = await executor<unknown>(GET_INVENTORY_FOR_VARIANT_QUERY, {
         id: normalizeGid(id, "ProductVariant"),
+        first: inventoryPageSize(options.first),
+        after: options.after ?? null,
       });
       const root = expectRecord(data, "data");
       return root.productVariant === null
@@ -322,4 +353,14 @@ export function createProductDataAccess(executor: AdminGraphqlExecutor) {
         : { variant: parseVariant(root.productVariant, "data.productVariant") };
     },
   };
+}
+
+function inventoryPageSize(first: number | undefined): number {
+  const value = first ?? INVENTORY_LEVEL_LIMIT;
+  if (!Number.isInteger(value) || value < 1 || value > MAX_INVENTORY_LEVEL_LIMIT) {
+    throw new RangeError(
+      `first must be an integer between 1 and ${MAX_INVENTORY_LEVEL_LIMIT}`,
+    );
+  }
+  return value;
 }

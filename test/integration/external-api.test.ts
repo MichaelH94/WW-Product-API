@@ -26,10 +26,23 @@ const RAW_INVENTORY_ITEM = {
         location: {
           id: "gid://shopify/Location/500",
           name: "Main warehouse",
+          isActive: true,
+          address: {
+            address1: "100 Main Street",
+            address2: null,
+            city: "Chicago",
+            province: "Illinois",
+            provinceCode: "IL",
+            country: "United States",
+            countryCode: "US",
+            zip: "60601",
+            phone: "+1 312 555 0100",
+          },
         },
         quantities: [
           {name: "available", quantity: 0},
           {name: "on_hand", quantity: 9},
+          {name: "incoming", quantity: 3},
         ],
       },
       {
@@ -37,10 +50,23 @@ const RAW_INVENTORY_ITEM = {
         location: {
           id: "gid://shopify/Location/501",
           name: "Overflow warehouse",
+          isActive: false,
+          address: {
+            address1: "200 Overflow Road",
+            address2: "Building B",
+            city: "Cicero",
+            province: "Illinois",
+            provinceCode: "IL",
+            country: "United States",
+            countryCode: "US",
+            zip: "60804",
+            phone: null,
+          },
         },
         quantities: [
           {name: "available", quantity: 4},
           {name: "on_hand", quantity: 4},
+          {name: "incoming", quantity: 0},
         ],
       },
     ],
@@ -87,6 +113,22 @@ const RAW_PRODUCT = {
   variants: {nodes: RAW_VARIANTS, pageInfo: PAGE_INFO},
 };
 
+const RAW_VARIANT_SUMMARY = {
+  ...RAW_VARIANTS[0],
+  inventoryItem: {
+    id: RAW_INVENTORY_ITEM.id,
+    tracked: RAW_INVENTORY_ITEM.tracked,
+  },
+};
+
+const RAW_SEARCH_PRODUCT = {
+  ...RAW_PRODUCT_SUMMARY,
+  variants: {
+    nodes: [RAW_VARIANT_SUMMARY, RAW_VARIANTS[1]],
+    pageInfo: PAGE_INFO,
+  },
+};
+
 type GraphqlObservation = {
   operation: string;
   variables: Record<string, unknown>;
@@ -128,7 +170,7 @@ const shopifyExecutor: AdminGraphqlExecutor = async <TData>(
 
     return {
       products: {
-        nodes: searchQuery.includes("no-results") ? [] : [RAW_PRODUCT],
+        nodes: searchQuery.includes("no-results") ? [] : [RAW_SEARCH_PRODUCT],
         pageInfo: {
           hasNextPage: !searchQuery.includes("no-results"),
           endCursor: searchQuery.includes("no-results") ? null : "cursor-next",
@@ -147,7 +189,7 @@ const shopifyExecutor: AdminGraphqlExecutor = async <TData>(
     return {
       productVariants: {
         nodes: matches
-          ? [{...RAW_VARIANTS[0], product: RAW_PRODUCT_SUMMARY}]
+          ? [{...RAW_VARIANT_SUMMARY, product: RAW_PRODUCT_SUMMARY}]
           : [],
         pageInfo: PAGE_INFO,
       },
@@ -159,6 +201,16 @@ const shopifyExecutor: AdminGraphqlExecutor = async <TData>(
     return {
       product:
         variables.id === "gid://shopify/Product/404" ? null : RAW_PRODUCT,
+    } as TData;
+  }
+
+  if (query.includes("GetInventoryForVariant")) {
+    observations.push({operation: "GetInventoryForVariant", variables});
+    return {
+      productVariant:
+        variables.id === "gid://shopify/ProductVariant/404"
+          ? null
+          : RAW_VARIANTS[0],
     } as TData;
   }
 
@@ -328,6 +380,13 @@ function assertVariantSchema(value: unknown): void {
       "tracked",
     ]);
     assert.ok(Array.isArray(value.inventoryItem.levels));
+    for (const level of value.inventoryItem.levels) {
+      assertRecord(level);
+      assertRecord(level.location);
+      assert.equal(typeof level.location.active, "boolean");
+      assertRecord(level.location.address);
+      assert.ok(Array.isArray(level.quantities));
+    }
   }
 }
 
@@ -457,10 +516,23 @@ test("looks up a product and returns exact inventory quantities by location", as
       location: {
         id: "gid://shopify/Location/500",
         name: "Main warehouse",
+        active: true,
+        address: {
+          address1: "100 Main Street",
+          address2: null,
+          city: "Chicago",
+          province: "Illinois",
+          provinceCode: "IL",
+          country: "United States",
+          countryCode: "US",
+          zip: "60601",
+          phone: "+1 312 555 0100",
+        },
       },
       quantities: [
         {name: "available", quantity: 0},
         {name: "on_hand", quantity: 9},
+        {name: "incoming", quantity: 3},
       ],
     },
     {
@@ -468,10 +540,23 @@ test("looks up a product and returns exact inventory quantities by location", as
       location: {
         id: "gid://shopify/Location/501",
         name: "Overflow warehouse",
+        active: false,
+        address: {
+          address1: "200 Overflow Road",
+          address2: "Building B",
+          city: "Cicero",
+          province: "Illinois",
+          provinceCode: "IL",
+          country: "United States",
+          countryCode: "US",
+          zip: "60804",
+          phone: null,
+        },
       },
       quantities: [
         {name: "available", quantity: 4},
         {name: "on_hand", quantity: 4},
+        {name: "incoming", quantity: 0},
       ],
     },
   ]);
@@ -479,6 +564,39 @@ test("looks up a product and returns exact inventory quantities by location", as
     operation: "GetProductById",
     variables: {id: "gid://shopify/Product/100"},
   });
+});
+
+test("retrieves paginated inventory for an identified variant", async () => {
+  observations.length = 0;
+  const response = await request(
+    "/api/variants/200/inventory?limit=25&after=inventoryCursor",
+  );
+  assert.equal(response.status, 200);
+  const payload = await readJson(response);
+  assertSuccessEnvelope(response, payload);
+  assertRecord(payload.data);
+  assertVariantSchema(payload.data.variant);
+  assertRecord(payload.data.variant);
+  assertRecord(payload.data.variant.inventoryItem);
+  const levels = payload.data.variant.inventoryItem.levels as Array<Record<string, unknown>>;
+  assert.equal(levels.length, 2);
+  assert.deepEqual(levels[0]?.quantities, [
+    {name: "available", quantity: 0},
+    {name: "on_hand", quantity: 9},
+    {name: "incoming", quantity: 3},
+  ]);
+  assert.deepEqual(observations.at(-1), {
+    operation: "GetInventoryForVariant",
+    variables: {
+      id: "gid://shopify/ProductVariant/200",
+      first: 25,
+      after: "inventoryCursor",
+    },
+  });
+
+  const missing = await request("/api/variants/404/inventory");
+  assert.equal(missing.status, 404);
+  assertErrorEnvelope(missing, await readJson(missing), "NOT_FOUND");
 });
 
 test("distinguishes missing products from empty exact-match results", async () => {
@@ -512,6 +630,8 @@ test("rejects malformed query, pagination, path, and method inputs", async () =>
     "/api/products/search?q=one&q=two",
     "/api/products/search?q=shirt&unexpected=true",
     "/api/products/by-sku/%E0%A4%A",
+    "/api/variants/200/inventory?limit=51",
+    "/api/variants/200/inventory?unexpected=true",
   ];
 
   for (const path of malformedPaths) {
@@ -579,6 +699,7 @@ test("keeps response schemas consistent across successful endpoint families", as
     "/api/products/by-sku/SKU-001",
     "/api/products/by-barcode/0012345678905",
     "/api/products/100",
+    "/api/variants/200/inventory",
   ];
 
   for (const path of paths) {

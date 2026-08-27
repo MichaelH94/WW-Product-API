@@ -5,7 +5,12 @@ import {
   ShopifyAdminHttpError,
   ShopifyAdminTimeoutError,
 } from "../shared/shopify/admin.ts";
-import type {Product, ProductSearchResult, VariantLookupResult} from "../shared/shopify/index.ts";
+import type {
+  InventoryForVariant,
+  Product,
+  ProductSearchResult,
+  VariantLookupResult,
+} from "../shared/shopify/index.ts";
 
 export interface ProductApiDataAccess {
   searchProducts(options: {
@@ -14,11 +19,14 @@ export interface ProductApiDataAccess {
     productType?: string;
     after?: string;
     first: number;
-    includeInventoryLevels: false;
   }): Promise<ProductSearchResult>;
   getProductBySku(sku: string): Promise<VariantLookupResult[]>;
   getProductByBarcode(barcode: string): Promise<VariantLookupResult[]>;
   getProductById(id: string): Promise<Product | null>;
+  getInventoryForVariant(
+    id: string,
+    options: {first: number; after?: string},
+  ): Promise<InventoryForVariant | null>;
 }
 
 class ApiRequestError extends Error {
@@ -111,6 +119,18 @@ function limit(value: string | null): number {
   return parsed;
 }
 
+function inventoryLimit(value: string | null): number {
+  if (value === null) return 20;
+  if (!/^\d+$/.test(value)) {
+    throw new ApiRequestError(400, "INVALID_INPUT", "limit must be an integer");
+  }
+  const parsed = Number(value);
+  if (parsed < 1 || parsed > 50) {
+    throw new ApiRequestError(400, "INVALID_INPUT", "limit must be between 1 and 50");
+  }
+  return parsed;
+}
+
 function cursor(value: string | null): string | undefined {
   if (value === null) return undefined;
   const normalized = value.trim();
@@ -159,7 +179,8 @@ function success(data: unknown, requestId: string): Response {
 function isExternalApiPath(pathname: string): boolean {
   return pathname === "/api/health" ||
     pathname === "/api/products" ||
-    pathname.startsWith("/api/products/");
+    pathname.startsWith("/api/products/") ||
+    pathname.startsWith("/api/variants/");
 }
 
 function safeRetryAfter(value: string | null): string {
@@ -231,7 +252,6 @@ export async function handleApiRequest(
         ...(productType === undefined ? {} : {productType}),
         ...(after === undefined ? {} : {after}),
         first: limit(url.searchParams.get("limit")),
-        includeInventoryLevels: false,
       });
       return success(result, requestId);
     }
@@ -264,6 +284,26 @@ export async function handleApiRequest(
       );
       if (!product) throw new ApiRequestError(404, "NOT_FOUND", "Product not found");
       return success(product, requestId);
+    }
+
+    const inventoryMatch = /^\/api\/variants\/([^/]+)\/inventory$/.exec(
+      url.pathname,
+    );
+    if (inventoryMatch) {
+      const allowed = new Set(["limit", "after"]);
+      assertQueryParameters(url, allowed);
+      const after = cursor(url.searchParams.get("after"));
+      const inventory = await options.dataAccess.getInventoryForVariant(
+        pathValue(inventoryMatch[1], "id", 100),
+        {
+          first: inventoryLimit(url.searchParams.get("limit")),
+          ...(after === undefined ? {} : {after}),
+        },
+      );
+      if (!inventory) {
+        throw new ApiRequestError(404, "NOT_FOUND", "Product variant not found");
+      }
+      return success(inventory, requestId);
     }
 
     throw new ApiRequestError(404, "NOT_FOUND", "API route not found");

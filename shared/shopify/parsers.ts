@@ -20,6 +20,18 @@ export interface InventoryLevel {
   location: {
     id: string;
     name: string;
+    active: boolean;
+    address: {
+      address1: string | null;
+      address2: string | null;
+      city: string | null;
+      province: string | null;
+      provinceCode: string | null;
+      country: string | null;
+      countryCode: string | null;
+      zip: string | null;
+      phone: string | null;
+    };
   };
   quantities: InventoryQuantity[];
 }
@@ -128,11 +140,24 @@ export function parseInventoryItem(
           const levelPath = `${path}.inventoryLevels.nodes[${index}]`;
           const parsedLevel = record(level, levelPath);
           const location = record(parsedLevel.location, `${levelPath}.location`);
+          const address = record(location.address, `${levelPath}.location.address`);
           return {
             id: string(parsedLevel.id, `${levelPath}.id`),
             location: {
               id: string(location.id, `${levelPath}.location.id`),
               name: string(location.name, `${levelPath}.location.name`),
+              active: boolean(location.isActive, `${levelPath}.location.isActive`),
+              address: {
+                address1: nullableString(address.address1, `${levelPath}.location.address.address1`),
+                address2: nullableString(address.address2, `${levelPath}.location.address.address2`),
+                city: nullableString(address.city, `${levelPath}.location.address.city`),
+                province: nullableString(address.province, `${levelPath}.location.address.province`),
+                provinceCode: nullableString(address.provinceCode, `${levelPath}.location.address.provinceCode`),
+                country: nullableString(address.country, `${levelPath}.location.address.country`),
+                countryCode: nullableString(address.countryCode, `${levelPath}.location.address.countryCode`),
+                zip: nullableString(address.zip, `${levelPath}.location.address.zip`),
+                phone: nullableString(address.phone, `${levelPath}.location.address.phone`),
+              },
             },
             quantities: array(parsedLevel.quantities, `${levelPath}.quantities`)
               .map((quantity, quantityIndex) => {

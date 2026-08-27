@@ -40,6 +40,7 @@ function dataAccess(overrides: Partial<ProductApiDataAccess> = {}): ProductApiDa
     getProductBySku: async () => [],
     getProductByBarcode: async () => [],
     getProductById: async () => product(),
+    getInventoryForVariant: async () => null,
     ...overrides,
   };
 }
@@ -113,7 +114,6 @@ test("search normalizes filters, caps limits, and rejects unknown parameters", a
     vendor: "Acme",
     productType: "Shirts",
     first: 25,
-    includeInventoryLevels: false,
   });
 
   for (const path of [
@@ -150,7 +150,6 @@ test("search defaults to 10 and validates opaque pagination cursors", async () =
     q: "shirt",
     after: "eyJsYXN0X2lkIjoxMjN9",
     first: 10,
-    includeInventoryLevels: false,
   });
 
   for (const path of [
@@ -187,6 +186,60 @@ test("routes normalized SKU, barcode, and product IDs", async () => {
     assert.equal(response.status, 200);
   }
   assert.deepEqual(calls, ["sku:SKU-001", "barcode:0123456789012", "id:123"]);
+});
+
+test("routes paginated variant inventory and distinguishes not found", async () => {
+  const calls: unknown[] = [];
+  const access = dataAccess({
+    getInventoryForVariant: async (id, options) => {
+      calls.push({id, options});
+      return id === "404" ? null : {
+        variant: {
+          id: "gid://shopify/ProductVariant/20",
+          title: "Blue / Large",
+          sku: "SKU-001",
+          barcode: "0123456789012",
+          price: "19.95",
+          selectedOptions: [],
+          inventoryItem: {
+            id: "gid://shopify/InventoryItem/30",
+            tracked: true,
+            levels: [],
+            pageInfo: {hasNextPage: false, endCursor: null},
+          },
+        },
+      };
+    },
+  });
+
+  const found = await handleApiRequest(
+    request("/api/variants/20/inventory?limit=30&after=inventoryCursor"),
+    {dataAccess: access, internalApiKey: API_KEY},
+  );
+  assert.equal(found.status, 200);
+  assert.deepEqual(calls[0], {
+    id: "20",
+    options: {first: 30, after: "inventoryCursor"},
+  });
+
+  const missing = await handleApiRequest(
+    request("/api/variants/404/inventory"),
+    {dataAccess: access, internalApiKey: API_KEY},
+  );
+  assert.equal(missing.status, 404);
+  assert.equal((await missing.json()).error.message, "Product variant not found");
+
+  for (const path of [
+    "/api/variants/20/inventory?limit=0",
+    "/api/variants/20/inventory?limit=51",
+    "/api/variants/20/inventory?extra=true",
+  ]) {
+    const invalid = await handleApiRequest(request(path), {
+      dataAccess: access,
+      internalApiKey: API_KEY,
+    });
+    assert.equal(invalid.status, 400, path);
+  }
 });
 
 test("returns stable not-found, method, and sanitized upstream errors", async () => {

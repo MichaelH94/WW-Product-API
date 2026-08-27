@@ -1,0 +1,21 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "00283f6e2d3618d83466d828716a574f"
+name = "WW Product API"
+application_url = "https://example.com"
+embedded = true
+
+[webhooks]
+api_version = "2026-07"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_products,read_inventory,read_locations"
+optional_scopes = [ ]
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [ ]
+
+[sidekick]
+extensions_summary = "Search and retrieve read-only Shopify product, variant, inventory, and location information."

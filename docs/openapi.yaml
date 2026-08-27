@@ -21,6 +21,8 @@ tags:
     description: Read-only service status information.
   - name: Products
     description: Read-only Shopify product and variant information.
+  - name: Inventory
+    description: Read-only inventory quantities for an identified variant.
 paths:
   /api/health:
     get:
@@ -55,8 +57,8 @@ paths:
         Use for discovery by title or free text, vendor, product type, or
         combined filters. If an exact SKU or barcode is known, use its exact
         lookup. Supply q, vendor, or productType. Pass pageInfo.endCursor
-        unchanged as after for the next page. Use product detail for complete
-        variants and inventory.
+        unchanged as after for the next page. Use product detail for product
+        context, then variant inventory for paginated quantities by location.
       parameters:
         - name: q
           in: query
@@ -132,9 +134,9 @@ paths:
       summary: Find variants by SKU
       description: >-
         Use when an exact SKU is known. Returns lightweight matching variants
-        and parent product IDs for a follow-up product detail call. SKUs are
-        not guaranteed unique, so data is always an array. An empty array means
-        no match, not an API error.
+        and parent product IDs. Use the returned variant ID with variant
+        inventory when quantities by location are needed. SKUs are not unique,
+        so data is always an array. An empty array means no match.
       parameters:
         - name: sku
           in: path
@@ -172,9 +174,9 @@ paths:
       summary: Find variants by barcode
       description: >-
         Use when an exact barcode is known. Returns lightweight matching
-        variants and parent product IDs for a follow-up product detail call.
-        Preserve leading zeroes. Barcodes are not guaranteed unique. An empty
-        array means no match, not an API error.
+        variants and parent product IDs. Preserve leading zeroes, then use the
+        returned variant ID with variant inventory for quantities by location.
+        Barcodes are not unique. An empty array means no match.
       parameters:
         - name: barcode
           in: path
@@ -195,6 +197,67 @@ paths:
           $ref: '#/components/responses/InvalidInput'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/ShopifyUpstreamError'
+        '503':
+          $ref: '#/components/responses/ShopifyThrottled'
+        '504':
+          $ref: '#/components/responses/ShopifyTimeout'
+  /api/variants/{id}/inventory:
+    get:
+      tags: [Inventory]
+      operationId: getVariantInventory
+      summary: Get inventory for a variant
+      description: >-
+        Use after search, SKU lookup, or barcode lookup identifies a variant.
+        Returns tracked status and paginated available, on-hand, and incoming
+        quantities by location, including staff-useful address fields.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric Shopify variant ID or URL-encoded ProductVariant GID.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+        - name: limit
+          in: query
+          required: false
+          description: Inventory locations to return. Defaults to 20 and cannot exceed 50.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+        - name: after
+          in: query
+          required: false
+          description: >-
+            Opaque cursor from inventoryItem.pageInfo.endCursor. Pass it
+            unchanged to retrieve the next page of inventory locations.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 1024
+            pattern: '^[A-Za-z0-9+/_=-]+$'
+      responses:
+        '200':
+          description: Variant inventory quantities grouped by Shopify location.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VariantInventoryResponse'
+        '400':
+          $ref: '#/components/responses/InvalidInput'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/VariantNotFound'
         '405':
           $ref: '#/components/responses/MethodNotAllowed'
         '500':
@@ -292,20 +355,57 @@ components:
       properties:
         name:
           type: string
-          enum: [available, on_hand]
+          enum: [available, on_hand, incoming]
         quantity:
           type: integer
           description: Exact inventory quantity returned by Shopify; zero is meaningful.
     Location:
       type: object
       additionalProperties: false
-      required: [id, name]
+      required: [id, name, active, address]
       properties:
         id:
           type: string
           description: Shopify Location GID retained for follow-up operations.
         name:
           type: string
+        active:
+          type: boolean
+          description: Whether Shopify reports the inventory location as active.
+        address:
+          $ref: '#/components/schemas/LocationAddress'
+    LocationAddress:
+      type: object
+      additionalProperties: false
+      required:
+        - address1
+        - address2
+        - city
+        - province
+        - provinceCode
+        - country
+        - countryCode
+        - zip
+        - phone
+      properties:
+        address1:
+          type: [string, 'null']
+        address2:
+          type: [string, 'null']
+        city:
+          type: [string, 'null']
+        province:
+          type: [string, 'null']
+        provinceCode:
+          type: [string, 'null']
+        country:
+          type: [string, 'null']
+        countryCode:
+          type: [string, 'null']
+        zip:
+          type: [string, 'null']
+        phone:
+          type: [string, 'null']
     InventoryLevel:
       type: object
       additionalProperties: false
@@ -515,6 +615,22 @@ components:
           $ref: '#/components/schemas/Product'
         meta:
           $ref: '#/components/schemas/ResponseMeta'
+    VariantInventoryData:
+      type: object
+      additionalProperties: false
+      required: [variant]
+      properties:
+        variant:
+          $ref: '#/components/schemas/ProductVariant'
+    VariantInventoryResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/VariantInventoryData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
     ErrorDetail:
       type: object
       additionalProperties: false
@@ -599,6 +715,12 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     ProductNotFound:
       description: No product exists for the supplied ID. This is distinct from an upstream API failure.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    VariantNotFound:
+      description: No product variant exists for the supplied ID.
       content:
         application/json:
           schema:

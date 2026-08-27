@@ -70,6 +70,22 @@ guaranteed to be unique.
 Accepts a numeric product ID or URL-encoded Shopify Product GID. Returns 404
 when the product doesn't exist.
 
+### `GET /api/variants/:id/inventory`
+
+Accepts a numeric variant ID or URL-encoded Shopify ProductVariant GID. Returns
+inventory tracking status and exact `available`, `on_hand`, and `incoming`
+quantities grouped by location. Locations include active status and staff-useful
+address fields. Use `limit` (default 20, maximum 50) and pass an unchanged
+`inventoryItem.pageInfo.endCursor` as `after` to retrieve additional locations.
+
+Shopify's 2026-07 schema requires `read_products`, `read_inventory`, and
+`read_locations` for product inventory. Selecting any `Location.address` field
+also requires the read-only `read_markets_home` scope. No write scope is used.
+
+Broad search and exact SKU/barcode lookup return lightweight inventory-item
+identifiers only. Use this endpoint after identifying the variant when complete
+inventory-by-location data is needed.
+
 No mutation or product write routes exist. POST, PUT, PATCH, and DELETE return
 `405 METHOD_NOT_ALLOWED`.
 
