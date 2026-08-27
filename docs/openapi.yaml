@@ -1,0 +1,572 @@
+openapi: 3.1.0
+info:
+  title: Read-only Shopify Product Information API
+  version: 1.0.0
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+  description: >-
+    Read-only product, variant, barcode, SKU, and inventory lookups for an AI
+    tool caller. All operations require an application bearer API key. The API
+    never exposes Shopify credentials or session objects and provides no
+    mutation-capable operations.
+servers:
+  - url: https://{apiHost}
+    description: Deployed internal API host. Replace the variable default before use.
+    variables:
+      apiHost:
+        default: api-host.invalid
+        description: Hostname of the deployed API, without a scheme or path.
+security:
+  - internalApiKey: []
+tags:
+  - name: Products
+    description: Read-only Shopify product and variant information.
+paths:
+  /api/products/search:
+    get:
+      tags: [Products]
+      operationId: searchProducts
+      summary: Search products
+      description: >-
+        Search for products using free text, vendor, product type, or a
+        combination of those filters. Supply at least one of q, vendor, or
+        productType. Use the returned pageInfo.endCursor as after to fetch the
+        next page. Results include product IDs, variants, exact SKU and barcode
+        values, price strings, and inventory quantities by location.
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: >-
+            Free-text product search phrase. Whitespace is normalized. Maximum
+            length is 200 characters.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - name: vendor
+          in: query
+          required: false
+          description: Exact Shopify vendor filter. Maximum length is 200 characters.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - name: productType
+          in: query
+          required: false
+          description: Exact Shopify product type filter. Maximum length is 200 characters.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - name: limit
+          in: query
+          required: false
+          description: Number of products to return. Defaults to 10 and cannot exceed 50.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: after
+          in: query
+          required: false
+          description: >-
+            Opaque pagination cursor from the previous response's
+            pageInfo.endCursor. Do not construct or modify this value.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 1024
+            pattern: '^[A-Za-z0-9+/_=-]+$'
+      responses:
+        '200':
+          description: A page of matching products. An empty products array means no matches.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductSearchResponse'
+        '400':
+          $ref: '#/components/responses/InvalidInput'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/ShopifyUpstreamError'
+        '503':
+          $ref: '#/components/responses/ShopifyThrottled'
+        '504':
+          $ref: '#/components/responses/ShopifyTimeout'
+  /api/products/by-sku/{sku}:
+    get:
+      tags: [Products]
+      operationId: findProductsBySku
+      summary: Find variants by SKU
+      description: >-
+        Find every returned variant whose exact SKU matches the supplied value.
+        Shopify does not guarantee SKU uniqueness, so data is always an array.
+        An empty array is a successful lookup with no matches, not an API error.
+      parameters:
+        - name: sku
+          in: path
+          required: true
+          description: Exact SKU to look up. URL-encode the value when necessary.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+      responses:
+        '200':
+          description: Matching variants and their parent products, or an empty data array.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VariantLookupResponse'
+        '400':
+          $ref: '#/components/responses/InvalidInput'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/ShopifyUpstreamError'
+        '503':
+          $ref: '#/components/responses/ShopifyThrottled'
+        '504':
+          $ref: '#/components/responses/ShopifyTimeout'
+  /api/products/by-barcode/{barcode}:
+    get:
+      tags: [Products]
+      operationId: findProductsByBarcode
+      summary: Find variants by barcode
+      description: >-
+        Find every returned variant whose exact barcode matches the supplied
+        value. Shopify does not guarantee barcode uniqueness, so data is always
+        an array. An empty array is a successful lookup with no matches, not an
+        API error. Preserve leading zeroes by treating the barcode as a string.
+      parameters:
+        - name: barcode
+          in: path
+          required: true
+          description: Exact barcode string to look up. URL-encode the value when necessary.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+      responses:
+        '200':
+          description: Matching variants and their parent products, or an empty data array.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VariantLookupResponse'
+        '400':
+          $ref: '#/components/responses/InvalidInput'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/ShopifyUpstreamError'
+        '503':
+          $ref: '#/components/responses/ShopifyThrottled'
+        '504':
+          $ref: '#/components/responses/ShopifyTimeout'
+  /api/products/{id}:
+    get:
+      tags: [Products]
+      operationId: getProductById
+      summary: Get one product by ID
+      description: >-
+        Retrieve detailed product, variant, selected-option, inventory, and
+        location information. Use a numeric Shopify product ID or a URL-encoded
+        Product GID previously returned by another operation.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric Shopify product ID or URL-encoded Shopify Product GID.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+      responses:
+        '200':
+          description: The requested product.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductResponse'
+        '400':
+          $ref: '#/components/responses/InvalidInput'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/ProductNotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/ShopifyUpstreamError'
+        '503':
+          $ref: '#/components/responses/ShopifyThrottled'
+        '504':
+          $ref: '#/components/responses/ShopifyTimeout'
+components:
+  securitySchemes:
+    internalApiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: >-
+        Application-level API key supplied as Authorization: Bearer <key>.
+        Configure the actual key outside this document using INTERNAL_API_KEY.
+  schemas:
+    ResponseMeta:
+      type: object
+      additionalProperties: false
+      required: [requestId]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+          description: Correlation ID to provide when diagnosing a request.
+    PageInfo:
+      type: object
+      additionalProperties: false
+      required: [hasNextPage, endCursor]
+      properties:
+        hasNextPage:
+          type: boolean
+          description: Whether Shopify reports another page.
+        endCursor:
+          type: [string, 'null']
+          description: Opaque cursor for the next request, or null when unavailable.
+    SelectedOption:
+      type: object
+      additionalProperties: false
+      required: [name, value]
+      properties:
+        name:
+          type: string
+        value:
+          type: string
+    InventoryQuantity:
+      type: object
+      additionalProperties: false
+      required: [name, quantity]
+      properties:
+        name:
+          type: string
+          enum: [available, on_hand]
+        quantity:
+          type: integer
+          description: Exact inventory quantity returned by Shopify; zero is meaningful.
+    Location:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          description: Shopify Location GID retained for follow-up operations.
+        name:
+          type: string
+    InventoryLevel:
+      type: object
+      additionalProperties: false
+      required: [id, location, quantities]
+      properties:
+        id:
+          type: string
+          description: Shopify InventoryLevel ID.
+        location:
+          $ref: '#/components/schemas/Location'
+        quantities:
+          type: array
+          description: Exact named quantities returned by Shopify.
+          items:
+            $ref: '#/components/schemas/InventoryQuantity'
+    InventoryItem:
+      type: object
+      additionalProperties: false
+      required: [id, tracked, levels, pageInfo]
+      properties:
+        id:
+          type: string
+          description: Shopify InventoryItem GID retained for follow-up operations.
+        tracked:
+          type: boolean
+        levels:
+          type: array
+          items:
+            $ref: '#/components/schemas/InventoryLevel'
+        pageInfo:
+          description: Inventory-level pagination information, or null if levels were not requested.
+          anyOf:
+            - $ref: '#/components/schemas/PageInfo'
+            - type: 'null'
+    ProductVariant:
+      type: object
+      additionalProperties: false
+      required: [id, title, sku, barcode, price, selectedOptions, inventoryItem]
+      properties:
+        id:
+          type: string
+          description: Shopify ProductVariant GID retained for follow-up operations.
+        title:
+          type: string
+        sku:
+          type: [string, 'null']
+          description: Exact SKU returned by Shopify, or null when no SKU is assigned.
+        barcode:
+          type: [string, 'null']
+          description: Exact barcode returned by Shopify, or null when no barcode is assigned.
+        price:
+          type: string
+          description: Exact decimal price string returned by Shopify. No currency is inferred.
+        selectedOptions:
+          type: array
+          items:
+            $ref: '#/components/schemas/SelectedOption'
+        inventoryItem:
+          description: Inventory information, or null when the variant has no accessible inventory item.
+          anyOf:
+            - $ref: '#/components/schemas/InventoryItem'
+            - type: 'null'
+    ProductMetafield:
+      type: object
+      additionalProperties: false
+      required: [namespace, key, type, value]
+      properties:
+        namespace:
+          type: string
+        key:
+          type: string
+        type:
+          type: string
+        value:
+          description: Parsed Shopify metafield JSON value. Its type depends on the metafield definition.
+    ProductSummary:
+      type: object
+      additionalProperties: false
+      required: [id, title, handle, status, vendor, productType, tags]
+      properties:
+        id:
+          type: string
+          description: Shopify Product GID retained for follow-up calls.
+        title:
+          type: string
+        handle:
+          type: string
+        status:
+          type: string
+        vendor:
+          type: string
+        productType:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+    Product:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title
+        - handle
+        - status
+        - vendor
+        - productType
+        - tags
+        - variants
+        - variantsPageInfo
+        - metafields
+      properties:
+        id:
+          type: string
+          description: Shopify Product GID retained for follow-up calls.
+        title:
+          type: string
+        handle:
+          type: string
+        status:
+          type: string
+        vendor:
+          type: string
+        productType:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductVariant'
+        variantsPageInfo:
+          $ref: '#/components/schemas/PageInfo'
+        metafields:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductMetafield'
+    VariantLookupResult:
+      type: object
+      additionalProperties: false
+      required: [product, variant]
+      properties:
+        product:
+          $ref: '#/components/schemas/ProductSummary'
+        variant:
+          $ref: '#/components/schemas/ProductVariant'
+    ProductSearchResult:
+      type: object
+      additionalProperties: false
+      required: [products, pageInfo]
+      properties:
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/Product'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+    ProductSearchResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/ProductSearchResult'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    VariantLookupResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/VariantLookupResult'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    ProductResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/Product'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    ErrorDetail:
+      type: object
+      additionalProperties: true
+      description: >-
+        Sanitized diagnostic metadata such as retryability, upstream status,
+        Shopify error codes, or Shopify request IDs. Never contains credentials.
+    ErrorBody:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum:
+            - INVALID_INPUT
+            - UNAUTHORIZED
+            - NOT_FOUND
+            - METHOD_NOT_ALLOWED
+            - INTERNAL_ERROR
+            - SHOPIFY_UPSTREAM_ERROR
+            - SHOPIFY_THROTTLED
+            - SHOPIFY_TIMEOUT
+        message:
+          type: string
+        details:
+          $ref: '#/components/schemas/ErrorDetail'
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error, meta]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+  responses:
+    InvalidInput:
+      description: A request parameter or path value is missing, malformed, duplicated, or out of range.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: The bearer API key is missing or invalid.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+            const: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ProductNotFound:
+      description: No product exists for the supplied ID. This is distinct from an upstream API failure.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    MethodNotAllowed:
+      description: The route is read-only and supports GET only.
+      headers:
+        Allow:
+          schema:
+            type: string
+            const: GET
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: The service encountered an unexpected internal error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ShopifyUpstreamError:
+      description: Shopify rejected or could not complete the upstream read request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ShopifyThrottled:
+      description: Shopify temporarily throttled the read request. Wait before retrying.
+      headers:
+        Retry-After:
+          description: Number of seconds to wait before retrying.
+          schema:
+            type: string
+            pattern: '^\d+(?:\.\d+)?$'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ShopifyTimeout:
+      description: Shopify did not respond before the upstream timeout. The request can be retried.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

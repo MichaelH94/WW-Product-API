@@ -1,0 +1,222 @@
+import { ShopifyAdminResponseError } from "./admin.ts";
+
+export interface PageInfo {
+  hasNextPage: boolean;
+  endCursor: string | null;
+}
+
+export interface SelectedOption {
+  name: string;
+  value: string;
+}
+
+export interface InventoryQuantity {
+  name: string;
+  quantity: number;
+}
+
+export interface InventoryLevel {
+  id: string;
+  location: {
+    id: string;
+    name: string;
+  };
+  quantities: InventoryQuantity[];
+}
+
+export interface InventoryItem {
+  id: string;
+  tracked: boolean;
+  levels: InventoryLevel[];
+  pageInfo: PageInfo | null;
+}
+
+export interface ProductVariant {
+  id: string;
+  title: string;
+  sku: string | null;
+  barcode: string | null;
+  price: string;
+  selectedOptions: SelectedOption[];
+  inventoryItem: InventoryItem | null;
+}
+
+export interface ProductMetafield {
+  namespace: string;
+  key: string;
+  type: string;
+  value: unknown;
+}
+
+export interface Product {
+  id: string;
+  title: string;
+  handle: string;
+  status: string;
+  vendor: string;
+  productType: string;
+  tags: string[];
+  variants: ProductVariant[];
+  variantsPageInfo: PageInfo;
+  metafields: ProductMetafield[];
+}
+
+function fail(path: string, expected: string): never {
+  throw new ShopifyAdminResponseError(
+    `Invalid Shopify Admin API data at ${path}: expected ${expected}`,
+  );
+}
+
+function record(value: unknown, path: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return fail(path, "an object");
+  }
+  return value as Record<string, unknown>;
+}
+
+function array(value: unknown, path: string): unknown[] {
+  if (!Array.isArray(value)) return fail(path, "an array");
+  return value;
+}
+
+function string(value: unknown, path: string): string {
+  if (typeof value !== "string") return fail(path, "a string");
+  return value;
+}
+
+function nullableString(value: unknown, path: string): string | null {
+  if (value === null) return null;
+  return string(value, path);
+}
+
+function boolean(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") return fail(path, "a boolean");
+  return value;
+}
+
+function number(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fail(path, "a finite number");
+  }
+  return value;
+}
+
+export function parsePageInfo(value: unknown, path: string): PageInfo {
+  const item = record(value, path);
+  return {
+    hasNextPage: boolean(item.hasNextPage, `${path}.hasNextPage`),
+    endCursor: nullableString(item.endCursor, `${path}.endCursor`),
+  };
+}
+
+export function parseInventoryItem(
+  value: unknown,
+  path: string,
+): InventoryItem | null {
+  if (value === null) return null;
+  const item = record(value, path);
+  const connection = item.inventoryLevels === undefined
+    ? null
+    : record(item.inventoryLevels, `${path}.inventoryLevels`);
+
+  return {
+    id: string(item.id, `${path}.id`),
+    tracked: boolean(item.tracked, `${path}.tracked`),
+    levels: connection === null
+      ? []
+      : array(connection.nodes, `${path}.inventoryLevels.nodes`).map((level, index) => {
+          const levelPath = `${path}.inventoryLevels.nodes[${index}]`;
+          const parsedLevel = record(level, levelPath);
+          const location = record(parsedLevel.location, `${levelPath}.location`);
+          return {
+            id: string(parsedLevel.id, `${levelPath}.id`),
+            location: {
+              id: string(location.id, `${levelPath}.location.id`),
+              name: string(location.name, `${levelPath}.location.name`),
+            },
+            quantities: array(parsedLevel.quantities, `${levelPath}.quantities`)
+              .map((quantity, quantityIndex) => {
+                const quantityPath = `${levelPath}.quantities[${quantityIndex}]`;
+                const parsedQuantity = record(quantity, quantityPath);
+                return {
+                  name: string(parsedQuantity.name, `${quantityPath}.name`),
+                  quantity: number(parsedQuantity.quantity, `${quantityPath}.quantity`),
+                };
+              }),
+          };
+        }),
+    pageInfo: connection === null
+      ? null
+      : parsePageInfo(connection.pageInfo, `${path}.inventoryLevels.pageInfo`),
+  };
+}
+
+export function parseVariant(value: unknown, path: string): ProductVariant {
+  const variant = record(value, path);
+  return {
+    id: string(variant.id, `${path}.id`),
+    title: string(variant.title, `${path}.title`),
+    sku: nullableString(variant.sku, `${path}.sku`),
+    barcode: nullableString(variant.barcode, `${path}.barcode`),
+    price: string(variant.price, `${path}.price`),
+    selectedOptions: array(variant.selectedOptions, `${path}.selectedOptions`)
+      .map((option, index) => {
+        const optionPath = `${path}.selectedOptions[${index}]`;
+        const parsedOption = record(option, optionPath);
+        return {
+          name: string(parsedOption.name, `${optionPath}.name`),
+          value: string(parsedOption.value, `${optionPath}.value`),
+        };
+      }),
+    inventoryItem: parseInventoryItem(
+      variant.inventoryItem,
+      `${path}.inventoryItem`,
+    ),
+  };
+}
+
+export function parseProduct(
+  value: unknown,
+  path: string,
+  metafieldAliases: ReadonlyArray<string>,
+): Product {
+  const product = record(value, path);
+  const variants = record(product.variants, `${path}.variants`);
+
+  return {
+    id: string(product.id, `${path}.id`),
+    title: string(product.title, `${path}.title`),
+    handle: string(product.handle, `${path}.handle`),
+    status: string(product.status, `${path}.status`),
+    vendor: string(product.vendor, `${path}.vendor`),
+    productType: string(product.productType, `${path}.productType`),
+    tags: array(product.tags, `${path}.tags`).map((tag, index) =>
+      string(tag, `${path}.tags[${index}]`)),
+    variants: array(variants.nodes, `${path}.variants.nodes`).map(
+      (variant, index) => parseVariant(variant, `${path}.variants.nodes[${index}]`),
+    ),
+    variantsPageInfo: parsePageInfo(
+      variants.pageInfo,
+      `${path}.variants.pageInfo`,
+    ),
+    metafields: metafieldAliases.flatMap((alias) => {
+      const value = product[alias];
+      if (value === null || value === undefined) return [];
+      const metafield = record(value, `${path}.${alias}`);
+      return [{
+        namespace: string(metafield.namespace, `${path}.${alias}.namespace`),
+        key: string(metafield.key, `${path}.${alias}.key`),
+        type: string(metafield.type, `${path}.${alias}.type`),
+        value: metafield.jsonValue,
+      }];
+    }),
+  };
+}
+
+export function expectRecord(value: unknown, path: string): Record<string, unknown> {
+  return record(value, path);
+}
+
+export function expectArray(value: unknown, path: string): unknown[] {
+  return array(value, path);
+}

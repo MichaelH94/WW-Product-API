@@ -8,6 +8,9 @@
   "scripts": {
     "shopify": "shopify",
     "build": "shopify app build",
+    "build:api": "node --experimental-strip-types --check server/server.ts",
+    "test": "node --test test/shopify/*.test.ts test/integration/*.test.ts",
+    "dev:api": "node --experimental-strip-types --watch server/server.ts",
     "dev": "shopify app dev",
     "info": "shopify app info",
     "generate": "shopify app generate",

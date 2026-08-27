@@ -1,0 +1,49 @@
+export interface ApiConfig {
+  shopDomain: string;
+  clientId: string;
+  clientSecret: string;
+  internalApiKey: string;
+  port: number;
+}
+
+function required(environment: NodeJS.ProcessEnv, names: string[]): string {
+  for (const name of names) {
+    const value = environment[name]?.trim();
+    if (value) return value;
+  }
+  throw new Error(`Missing required environment variable: ${names.join(" or ")}`);
+}
+
+export function normalizeShopDomain(input: string): string {
+  let value = input.trim().toLowerCase();
+  value = value.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  if (!value.includes(".")) value = `${value}.myshopify.com`;
+  if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(value)) {
+    throw new Error("SHOPIFY_SHOP must be a valid myshopify.com domain or store handle");
+  }
+  return value;
+}
+
+export function loadApiConfig(environment: NodeJS.ProcessEnv = process.env): ApiConfig {
+  const internalApiKey = required(environment, ["INTERNAL_API_KEY"]);
+  if (internalApiKey.length < 32) {
+    throw new Error("INTERNAL_API_KEY must contain at least 32 characters");
+  }
+
+  const portValue = environment.PORT ?? environment.SERVER_PORT ?? "3000";
+  const port = Number(portValue);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("PORT must be an integer between 1 and 65535");
+  }
+
+  return {
+    shopDomain: normalizeShopDomain(required(environment, [
+      "SHOPIFY_SHOP",
+      "SHOPIFY_STORE_DOMAIN",
+    ])),
+    clientId: required(environment, ["SHOPIFY_CLIENT_ID", "SHOPIFY_API_KEY"]),
+    clientSecret: required(environment, ["SHOPIFY_CLIENT_SECRET", "SHOPIFY_API_SECRET"]),
+    internalApiKey,
+    port,
+  };
+}

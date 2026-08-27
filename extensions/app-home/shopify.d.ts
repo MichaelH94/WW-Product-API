@@ -17,3 +17,15 @@ declare module './src/pages/NotFoundPage.jsx' {
   const shopify: import('@shopify/ui-extensions/admin.app.home.render').Api;
   const globalThis: { shopify: typeof shopify };
 }
+
+//@ts-ignore
+declare module './src/development.js' {
+  const shopify: import('@shopify/ui-extensions/admin.app.home.render').Api;
+  const globalThis: { shopify: typeof shopify };
+}
+
+//@ts-ignore
+declare module './src/pages/ProductDiagnosticsPage.jsx' {
+  const shopify: import('@shopify/ui-extensions/admin.app.home.render').Api;
+  const globalThis: { shopify: typeof shopify };
+}
