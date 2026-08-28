@@ -60,6 +60,14 @@ export interface ProductMetafield {
   value: unknown;
 }
 
+export interface ProductImage {
+  mediaId: string;
+  url: string;
+  altText: string | null;
+  width: number | null;
+  height: number | null;
+}
+
 export interface Product {
   id: string;
   title: string;
@@ -68,6 +76,11 @@ export interface Product {
   vendor: string;
   productType: string;
   tags: string[];
+  description: string;
+  descriptionHtml: string;
+  featuredImage: ProductImage | null;
+  images: ProductImage[];
+  imagesPageInfo: PageInfo;
   variants: ProductVariant[];
   variantsPageInfo: PageInfo;
   metafields: ProductMetafield[];
@@ -113,11 +126,51 @@ function number(value: unknown, path: string): number {
   return value;
 }
 
+function nullableNumber(value: unknown, path: string): number | null {
+  if (value === null) return null;
+  return number(value, path);
+}
+
+function httpsUrl(value: unknown, path: string): string {
+  const parsed = string(value, path);
+  try {
+    if (new URL(parsed).protocol !== "https:") return fail(path, "an HTTPS URL");
+  } catch {
+    return fail(path, "an HTTPS URL");
+  }
+  return parsed;
+}
+
 export function parsePageInfo(value: unknown, path: string): PageInfo {
   const item = record(value, path);
   return {
     hasNextPage: boolean(item.hasNextPage, `${path}.hasNextPage`),
     endCursor: nullableString(item.endCursor, `${path}.endCursor`),
+  };
+}
+
+export function parseProductMedia(
+  value: unknown,
+  path: string,
+): {images: ProductImage[]; pageInfo: PageInfo} {
+  const connection = record(value, path);
+  const images = array(connection.nodes, `${path}.nodes`).flatMap((node, index) => {
+    const nodePath = `${path}.nodes[${index}]`;
+    const media = record(node, nodePath);
+    if (string(media.__typename, `${nodePath}.__typename`) !== "MediaImage") return [];
+    if (media.image === null) return [];
+    const image = record(media.image, `${nodePath}.image`);
+    return [{
+      mediaId: string(media.id, `${nodePath}.id`),
+      url: httpsUrl(image.url, `${nodePath}.image.url`),
+      altText: nullableString(media.alt, `${nodePath}.alt`),
+      width: nullableNumber(image.width, `${nodePath}.image.width`),
+      height: nullableNumber(image.height, `${nodePath}.image.height`),
+    }];
+  });
+  return {
+    images,
+    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
   };
 }
 
@@ -207,6 +260,7 @@ export function parseProduct(
 ): Product {
   const product = record(value, path);
   const variants = record(product.variants, `${path}.variants`);
+  const media = parseProductMedia(product.media, `${path}.media`);
 
   return {
     id: string(product.id, `${path}.id`),
@@ -217,6 +271,11 @@ export function parseProduct(
     productType: string(product.productType, `${path}.productType`),
     tags: array(product.tags, `${path}.tags`).map((tag, index) =>
       string(tag, `${path}.tags[${index}]`)),
+    description: string(product.description, `${path}.description`),
+    descriptionHtml: string(product.descriptionHtml, `${path}.descriptionHtml`),
+    featuredImage: media.images[0] ?? null,
+    images: media.images,
+    imagesPageInfo: media.pageInfo,
     variants: array(variants.nodes, `${path}.variants.nodes`).map(
       (variant, index) => parseVariant(variant, `${path}.variants.nodes[${index}]`),
     ),

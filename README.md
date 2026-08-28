@@ -18,6 +18,7 @@ The Worker obtains Shopify access tokens server-side through the client credenti
 - Search products by text, vendor, or product type.
 - Find variants by exact SKU or barcode with inventory returned immediately.
 - Retrieve product and variant details.
+- Retrieve plain-text/HTML product descriptions and direct Shopify image URLs.
 - Retrieve tracked inventory quantities by location.
 - Check service health and the configured Shopify API version.
 
@@ -93,5 +94,5 @@ Wrangler configuration is stored in [`wrangler.jsonc`](wrangler.jsonc). It conta
 - Send `Authorization: Bearer <INTERNAL_API_KEY>` with every API request.
 - Keep Shopify permissions strictly read-only.
 - Do not add mutation operations or write-capable HTTP routes.
-- Keep broad searches lightweight; request detailed inventory only after identifying a product or variant.
+- Keep broad searches lightweight: they return one image and a short description preview. Exact lookups return bounded image collections and inventory.
 - Treat response request IDs as diagnostic correlation values, not credentials.

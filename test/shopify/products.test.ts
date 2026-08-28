@@ -3,10 +3,14 @@ import test from "node:test";
 
 import { ShopifyAdminResponseError } from "../../shared/shopify/admin.ts";
 import {
+  BROAD_SEARCH_IMAGE_LIMIT,
+  DESCRIPTION_PREVIEW_LIMIT,
   EXACT_LOOKUP_INVENTORY_LEVEL_LIMIT,
+  EXACT_LOOKUP_IMAGE_LIMIT,
   EXACT_VARIANT_LOOKUP_LIMIT,
   GET_INVENTORY_FOR_VARIANT_QUERY,
   LOOKUP_PRODUCT_VARIANTS_QUERY,
+  PRODUCT_DETAIL_IMAGE_LIMIT,
   buildGetProductByIdQuery,
   buildSearchProductsQuery,
   createProductDataAccess,
@@ -17,6 +21,22 @@ import {
 } from "../../shared/shopify/shop.ts";
 
 const pageInfo = { hasNextPage: false, endCursor: null };
+
+function media(count = 2) {
+  return {
+    nodes: Array.from({length: count}, (_, index) => ({
+      __typename: "MediaImage",
+      id: `gid://shopify/MediaImage/${60 + index}`,
+      alt: index === 0 ? "Front view" : null,
+      image: {
+        url: `https://cdn.shopify.com/s/files/product-${index + 1}.jpg`,
+        width: 1200,
+        height: 1200,
+      },
+    })),
+    pageInfo,
+  };
+}
 
 function inventoryItem(withLevels = true) {
   return {
@@ -78,6 +98,9 @@ function product(withLevels = true) {
     vendor: "Example Vendor",
     productType: "Shirts",
     tags: ["summer", "blue"],
+    description: "A blue summer shirt.",
+    descriptionHtml: "<p>A blue summer shirt.</p>",
+    media: media(),
     variants: { nodes: [variant(withLevels)], pageInfo },
     metafield0: {
       namespace: "custom",
@@ -101,6 +124,9 @@ test("parses product detail, variants, inventory, locations, and metafields", as
 
   assert.equal(variables?.id, "gid://shopify/Product/10");
   assert.equal(result?.title, "Example Shirt");
+  assert.equal(result?.description, "A blue summer shirt.");
+  assert.equal(result?.featuredImage?.url, "https://cdn.shopify.com/s/files/product-1.jpg");
+  assert.equal(result?.images.length, 2);
   assert.equal(result?.variants[0]?.sku, "SKU-001");
   assert.deepEqual(result?.variants[0]?.selectedOptions[0], {
     name: "Color",
@@ -161,6 +187,8 @@ test("builds an escaped field-specific product search and parses summary invento
   assert.equal(variables?.first, 10);
   assert.equal(result.products[0]?.variants[0]?.inventoryItem?.levels.length, 0);
   assert.deepEqual(result.pageInfo, { hasNextPage: true, endCursor: "cursor-1" });
+  assert.equal(result.products[0]?.descriptionPreview, "A blue summer shirt.");
+  assert.equal(result.products[0]?.featuredImage?.altText, "Front view");
 });
 
 test("lists products without attaching inventory levels to broad results", async () => {
@@ -182,7 +210,89 @@ test("lists products without attaching inventory levels to broad results", async
   assert.equal(variables?.first, 10);
   assert.match(query, /variants\(first: 3\)/);
   assert.doesNotMatch(query, /inventoryLevels/);
+  assert.match(query, /media\(first: 1/);
+  assert.doesNotMatch(query, /descriptionHtml/);
   assert.deepEqual(result.products[0]?.variants[0]?.inventoryItem?.levels, []);
+});
+
+test("broad search truncates descriptions and returns only the primary image", async () => {
+  const longDescription = "x".repeat(500);
+  const api = createProductDataAccess(async <T>() => ({
+    products: {
+      nodes: [{
+        ...product(false),
+        description: longDescription,
+        media: media(1),
+      }],
+      pageInfo,
+    },
+  }) as T);
+
+  const result = await api.searchProducts({q: "shirt", first: 10});
+  assert.equal(result.products[0]?.descriptionPreview.length, 320);
+  assert.match(result.products[0]?.descriptionPreview ?? "", /\.\.\.$/);
+  assert.equal(result.products[0]?.featuredImage?.url,
+    "https://cdn.shopify.com/s/files/product-1.jpg");
+  assert.equal("images" in (result.products[0] ?? {}), false);
+  assert.equal("descriptionHtml" in (result.products[0] ?? {}), false);
+});
+
+test("description and media absence are valid and non-image media is excluded", async () => {
+  const api = createProductDataAccess(async <T>() => ({
+    product: {
+      ...product(),
+      description: "",
+      descriptionHtml: "",
+      media: {
+        nodes: [{
+          __typename: "Video",
+          id: "gid://shopify/Video/99",
+          alt: "Demo video",
+        }],
+        pageInfo,
+      },
+    },
+  }) as T);
+
+  const result = await api.getProductById("10");
+  assert.equal(result?.description, "");
+  assert.equal(result?.descriptionHtml, "");
+  assert.equal(result?.featuredImage, null);
+  assert.deepEqual(result?.images, []);
+});
+
+test("exact lookup preserves full description, exact image URLs, and five-image bound", async () => {
+  const fullDescription = "Full details ".repeat(50);
+  let operation = "";
+  const api = createProductDataAccess(async <T>(query: string) => {
+    operation = query;
+    return {
+      productVariants: {
+        nodes: [{
+          ...variant(),
+          product: {
+            ...product(),
+            description: fullDescription,
+            descriptionHtml: `<p>${fullDescription}</p>`,
+            media: {
+              ...media(5),
+              pageInfo: {hasNextPage: true, endCursor: "image-5"},
+            },
+          },
+        }],
+        pageInfo,
+      },
+    } as T;
+  });
+
+  const result = await api.getProductBySku("EV1-LE");
+  assert.equal(result.matches[0]?.product.description, fullDescription);
+  assert.equal(result.matches[0]?.product.images.length, 5);
+  assert.deepEqual(result.matches[0]?.product.imagesPageInfo,
+    {hasNextPage: true, endCursor: "image-5"});
+  assert.equal(result.matches[0]?.product.images[4]?.url,
+    "https://cdn.shopify.com/s/files/product-5.jpg");
+  assert.match(operation, /media\(first: 5, query: "media_type:IMAGE", sortKey: POSITION\)/);
 });
 
 test("combines normalized free-text, vendor, and product-type search filters", async () => {
@@ -231,6 +341,8 @@ test("EV1-LE and SAMF180 exact SKU lookups return inventory in one query", async
   assert.equal(ev1.matches[0]?.variant.sku, "EV1-LE");
   assert.equal(samf.matches[0]?.variant.sku, "SAMF180");
   assert.equal(samf.matches[0]?.product.id, "gid://shopify/Product/10");
+  assert.equal(samf.matches[0]?.product.description, "A blue summer shirt.");
+  assert.equal(samf.matches[0]?.product.images.length, 2);
   assert.equal(samf.matches[0]?.variant.inventoryItem?.levels[0]?.available, 7);
   assert.equal(documents.length, 2);
   assert.match(LOOKUP_PRODUCT_VARIANTS_QUERY, /inventoryLevels/);
@@ -248,6 +360,8 @@ test("exact barcode lookup preserves leading zeroes and location quantities", as
 
   assert.equal(result.state, "found_with_inventory");
   assert.equal(result.matches[0]?.variant.barcode, "0123456789012");
+  assert.equal(result.matches[0]?.product.featuredImage?.url,
+    "https://cdn.shopify.com/s/files/product-1.jpg");
   assert.deepEqual(result.matches[0]?.variant.inventoryItem?.levels[0], {
     id: "gid://shopify/InventoryLevel/40?inventory_item_id=30",
     location: {id: "gid://shopify/Location/50", name: "Main"},
@@ -376,6 +490,12 @@ test("all data-access operations are GraphQL queries, never mutations", () => {
 });
 
 test("uses conservative connection limits for search, detail, and inventory", () => {
+  assert.equal(BROAD_SEARCH_IMAGE_LIMIT, 1);
+  assert.equal(EXACT_LOOKUP_IMAGE_LIMIT, 5);
+  assert.equal(PRODUCT_DETAIL_IMAGE_LIMIT, 10);
+  assert.equal(DESCRIPTION_PREVIEW_LIMIT, 320);
+  assert.match(buildSearchProductsQuery().query,
+    /media\(first: 1, query: "media_type:IMAGE", sortKey: POSITION\)/);
   assert.match(buildSearchProductsQuery().query, /variants\(first: 3\)/);
   assert.doesNotMatch(buildSearchProductsQuery().query, /inventoryLevels/);
   assert.match(buildGetProductByIdQuery().query, /variants\(first: 10\)/);
@@ -406,6 +526,8 @@ test("uses conservative connection limits for search, detail, and inventory", ()
     LOOKUP_PRODUCT_VARIANTS_QUERY,
     /quantities\(names: \["available", "on_hand", "incoming"\]\)/,
   );
+  assert.match(LOOKUP_PRODUCT_VARIANTS_QUERY, /media\(first: 5/);
+  assert.match(buildGetProductByIdQuery().query, /media\(first: \$mediaFirst/);
 });
 
 test("recognizes only a confirmed partner development store", async () => {

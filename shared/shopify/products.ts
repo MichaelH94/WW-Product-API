@@ -11,9 +11,11 @@ import {
   expectString,
   parsePageInfo,
   parseProduct,
+  parseProductMedia,
   parseVariant,
   type PageInfo,
   type Product,
+  type ProductImage,
   type ProductVariant,
 } from "./parsers.ts";
 
@@ -46,12 +48,28 @@ export type ProductSearchOptions = ProductSearchPageOptions & (
 );
 
 export interface ProductSearchResult {
-  products: Product[];
+  products: ProductSearchItem[];
   pageInfo: PageInfo;
+}
+
+export interface ProductSearchItem {
+  id: string;
+  title: string;
+  handle: string;
+  status: string;
+  vendor: string;
+  productType: string;
+  tags: string[];
+  descriptionPreview: string;
+  featuredImage: ProductImage | null;
+  variants: ProductVariant[];
+  variantsPageInfo: PageInfo;
 }
 
 export interface ProductDetailOptions {
   metafields?: ReadonlyArray<MetafieldSelector>;
+  mediaFirst?: number;
+  mediaAfter?: string;
 }
 
 export type InventoryResultState =
@@ -78,6 +96,11 @@ export interface ExactVariantLookupMatch {
     status: string;
     vendor: string;
     productType: string;
+    description: string;
+    descriptionHtml: string;
+    featuredImage: ProductImage | null;
+    images: ProductImage[];
+    imagesPageInfo: PageInfo;
   };
   variant: {
     id: string;
@@ -135,12 +158,28 @@ export const EXACT_LOOKUP_INVENTORY_LEVEL_LIMIT = 20;
 export const PRODUCT_DETAIL_VARIANT_LIMIT = 10;
 export const INVENTORY_LEVEL_LIMIT = 20;
 export const MAX_INVENTORY_LEVEL_LIMIT = 50;
+export const BROAD_SEARCH_IMAGE_LIMIT = 1;
+export const EXACT_LOOKUP_IMAGE_LIMIT = 5;
+export const PRODUCT_DETAIL_IMAGE_LIMIT = 10;
+export const DESCRIPTION_PREVIEW_LIMIT = 320;
 
 const INVENTORY_ITEM_SUMMARY = `
   inventoryItem {
     id
     tracked
   }`;
+
+function productMedia(first: string, after = ""): string {
+  return `media(first: ${first}${after}, query: "media_type:IMAGE", sortKey: POSITION) {
+    nodes {
+      __typename
+      id
+      alt
+      ... on MediaImage { image { url width height } }
+    }
+    pageInfo { hasNextPage endCursor }
+  }`;
+}
 
 function inventoryItemWithLevels(first: string, after = ""): string {
   return `
@@ -261,6 +300,8 @@ export function buildSearchProductsQuery(): { query: string; aliases: string[] }
       products(first: $first, after: $after, query: $query) {
         nodes {
           ${PRODUCT_FIELDS}
+          description
+          ${productMedia(String(BROAD_SEARCH_IMAGE_LIMIT))}
           variants(first: ${SEARCH_VARIANT_LIMIT}) {
             nodes { ${VARIANT_FIELDS} ${INVENTORY_ITEM_SUMMARY} }
             pageInfo { hasNextPage endCursor }
@@ -278,9 +319,12 @@ export function buildGetProductByIdQuery(
   const selection = metafieldSelection(metafields);
   return {
     aliases: selection.aliases,
-    query: `query GetProductById($id: ID!) {
+    query: `query GetProductById($id: ID!, $mediaFirst: Int!, $mediaAfter: String) {
       product(id: $id) {
         ${PRODUCT_FIELDS}
+        description
+        descriptionHtml
+        ${productMedia("$mediaFirst", ", after: $mediaAfter")}
         variants(first: ${PRODUCT_DETAIL_VARIANT_LIMIT}) {
           nodes { ${VARIANT_FIELDS} ${INVENTORY_ITEM_WITH_LEVELS} }
           pageInfo { hasNextPage endCursor }
@@ -316,7 +360,16 @@ export const LOOKUP_PRODUCT_VARIANTS_QUERY = `query LookupProductVariantInventor
           pageInfo { hasNextPage endCursor }
         }
       }
-      product { id title status vendor productType }
+      product {
+        id
+        title
+        status
+        vendor
+        productType
+        description
+        descriptionHtml
+        ${productMedia(String(EXACT_LOOKUP_IMAGE_LIMIT))}
+      }
     }
     pageInfo { hasNextPage }
   }
@@ -354,6 +407,7 @@ function parseExactLookupMatch(
 ): ExactVariantLookupMatch {
   const variant = expectRecord(value, path);
   const product = expectRecord(variant.product, `${path}.product`);
+  const media = parseProductMedia(product.media, `${path}.product.media`);
   const rawItem = variant.inventoryItem;
   let inventoryItem: ExactVariantLookupMatch["variant"]["inventoryItem"] = null;
 
@@ -397,6 +451,11 @@ function parseExactLookupMatch(
       status: expectString(product.status, `${path}.product.status`),
       vendor: expectString(product.vendor, `${path}.product.vendor`),
       productType: expectString(product.productType, `${path}.product.productType`),
+      description: expectString(product.description, `${path}.product.description`),
+      descriptionHtml: expectString(product.descriptionHtml, `${path}.product.descriptionHtml`),
+      featuredImage: media.images[0] ?? null,
+      images: media.images,
+      imagesPageInfo: media.pageInfo,
     },
     variant: {
       id: expectString(variant.id, `${path}.id`),
@@ -460,7 +519,7 @@ export function createProductDataAccess(executor: AdminGraphqlExecutor) {
       const connection = expectRecord(root.products, "data.products");
       return {
         products: expectArray(connection.nodes, "data.products.nodes").map(
-          (product, index) => parseProduct(product, `data.products.nodes[${index}]`, built.aliases),
+          (product, index) => parseSearchProduct(product, `data.products.nodes[${index}]`),
         ),
         pageInfo: parsePageInfo(connection.pageInfo, "data.products.pageInfo"),
       };
@@ -474,6 +533,8 @@ export function createProductDataAccess(executor: AdminGraphqlExecutor) {
       const built = buildGetProductByIdQuery(options.metafields);
       const data = await executor<unknown>(built.query, {
         id: normalizeGid(id, "Product"),
+        mediaFirst: productDetailMediaSize(options.mediaFirst),
+        mediaAfter: options.mediaAfter ?? null,
       }, context);
       const root = expectRecord(data, "data");
       return root.product === null
@@ -511,6 +572,46 @@ export function createProductDataAccess(executor: AdminGraphqlExecutor) {
       return {state: inventoryResultState(variant), variant};
     },
   };
+}
+
+function parseSearchProduct(value: unknown, path: string): ProductSearchItem {
+  const product = expectRecord(value, path);
+  const variants = expectRecord(product.variants, `${path}.variants`);
+  const media = parseProductMedia(product.media, `${path}.media`);
+  return {
+    id: expectString(product.id, `${path}.id`),
+    title: expectString(product.title, `${path}.title`),
+    handle: expectString(product.handle, `${path}.handle`),
+    status: expectString(product.status, `${path}.status`),
+    vendor: expectString(product.vendor, `${path}.vendor`),
+    productType: expectString(product.productType, `${path}.productType`),
+    tags: expectArray(product.tags, `${path}.tags`).map((tag, index) =>
+      expectString(tag, `${path}.tags[${index}]`)),
+    descriptionPreview: truncateDescription(
+      expectString(product.description, `${path}.description`),
+    ),
+    featuredImage: media.images[0] ?? null,
+    variants: expectArray(variants.nodes, `${path}.variants.nodes`).map(
+      (variant, index) => parseVariant(variant, `${path}.variants.nodes[${index}]`),
+    ),
+    variantsPageInfo: parsePageInfo(variants.pageInfo, `${path}.variants.pageInfo`),
+  };
+}
+
+function truncateDescription(value: string): string {
+  const characters = Array.from(value);
+  if (characters.length <= DESCRIPTION_PREVIEW_LIMIT) return value;
+  return `${characters.slice(0, DESCRIPTION_PREVIEW_LIMIT - 3).join("")}...`;
+}
+
+function productDetailMediaSize(first: number | undefined): number {
+  const value = first ?? PRODUCT_DETAIL_IMAGE_LIMIT;
+  if (!Number.isInteger(value) || value < 1 || value > PRODUCT_DETAIL_IMAGE_LIMIT) {
+    throw new RangeError(
+      `mediaFirst must be an integer between 1 and ${PRODUCT_DETAIL_IMAGE_LIMIT}`,
+    );
+  }
+  return value;
 }
 
 function inventoryResultState(

@@ -16,6 +16,19 @@ import {createApiHttpServer} from "../../server/http.ts";
 
 const INTERNAL_API_KEY = "integration-test-api-key-with-sufficient-entropy";
 const PAGE_INFO = {hasNextPage: false, endCursor: null};
+const RAW_MEDIA = {
+  nodes: [{
+    __typename: "MediaImage",
+    id: "gid://shopify/MediaImage/600",
+    alt: "Blue shirt front view",
+    image: {
+      url: "https://cdn.shopify.com/s/files/blue-shirt.jpg",
+      width: 1200,
+      height: 1200,
+    },
+  }],
+  pageInfo: PAGE_INFO,
+};
 
 const RAW_INVENTORY_ITEM = {
   id: "gid://shopify/InventoryItem/300",
@@ -107,6 +120,9 @@ const RAW_PRODUCT_SUMMARY = {
   vendor: "Acme",
   productType: "Shirts",
   tags: ["blue", "summer"],
+  description: "A blue shirt for summer.",
+  descriptionHtml: "<p>A blue shirt for summer.</p>",
+  media: RAW_MEDIA,
 };
 
 const RAW_PRODUCT = {
@@ -124,6 +140,7 @@ const RAW_VARIANT_SUMMARY = {
 
 const RAW_SEARCH_PRODUCT = {
   ...RAW_PRODUCT_SUMMARY,
+  descriptionHtml: undefined,
   variants: {
     nodes: [RAW_VARIANT_SUMMARY, RAW_VARIANTS[1]],
     pageInfo: PAGE_INFO,
@@ -355,8 +372,13 @@ function assertErrorEnvelope(
 function assertProductSchema(value: unknown): void {
   assertRecord(value);
   assert.deepEqual(Object.keys(value).sort(), [
+    "description",
+    "descriptionHtml",
+    "featuredImage",
     "handle",
     "id",
+    "images",
+    "imagesPageInfo",
     "metafields",
     "productType",
     "status",
@@ -379,15 +401,18 @@ function assertProductSchema(value: unknown): void {
 function assertProductSummarySchema(value: unknown): void {
   assertRecord(value);
   assert.deepEqual(Object.keys(value).sort(), [
-    "handle",
+    "description",
+    "descriptionHtml",
+    "featuredImage",
     "id",
+    "images",
+    "imagesPageInfo",
     "productType",
     "status",
-    "tags",
     "title",
     "vendor",
   ]);
-  assert.ok(Array.isArray(value.tags));
+  assert.ok(Array.isArray(value.images));
 }
 
 function assertVariantSchema(value: unknown): void {
@@ -445,6 +470,25 @@ function assertVariantLookupSchema(value: unknown): void {
   assert.ok(Array.isArray(value.matches));
 }
 
+function assertSearchProductSchema(value: unknown): void {
+  assertRecord(value);
+  assert.deepEqual(Object.keys(value).sort(), [
+    "descriptionPreview",
+    "featuredImage",
+    "handle",
+    "id",
+    "productType",
+    "status",
+    "tags",
+    "title",
+    "variants",
+    "variantsPageInfo",
+    "vendor",
+  ]);
+  assert.ok(Array.isArray(value.tags));
+  assert.ok(Array.isArray(value.variants));
+}
+
 test("requires a valid bearer credential without affecting health", async () => {
   const missingResponse = await request("/api/products/search?q=shirt", {
     authenticated: false,
@@ -490,7 +534,11 @@ test('broad "snowboards" search is lightweight and normalized', async () => {
   assert.deepEqual(Object.keys(payload.data).sort(), ["pageInfo", "products"]);
   assert.ok(Array.isArray(payload.data.products));
   assert.equal(payload.data.products.length, 1);
-  assertProductSchema(payload.data.products[0]);
+  assertSearchProductSchema(payload.data.products[0]);
+  assert.equal(payload.data.products[0].descriptionPreview,
+    "A blue shirt for summer.");
+  assert.equal(payload.data.products[0].featuredImage.url,
+    "https://cdn.shopify.com/s/files/blue-shirt.jpg");
   assert.match(lastSearchDocument, /variants\(first: 3\)/);
   assert.doesNotMatch(lastSearchDocument, /inventoryLevels/);
 
@@ -517,6 +565,11 @@ test(`performs inventory-enriched exact SKU lookup for ${sku} in one operation`,
   const matches = payload.data.matches as Array<Record<string, unknown>>;
   assert.equal(matches.length, 1);
   assertRecord(matches[0].variant);
+  assertRecord(matches[0].product);
+  assert.equal(matches[0].product.description, "A blue shirt for summer.");
+  assert.equal(matches[0].product.descriptionHtml,
+    "<p>A blue shirt for summer.</p>");
+  assert.equal((matches[0].product.images as unknown[]).length, 1);
   assert.equal(matches[0].variant.sku, sku);
   assertRecord(matches[0].variant.inventoryItem);
   const levels = matches[0].variant.inventoryItem.levels as Array<Record<string, unknown>>;
@@ -542,6 +595,9 @@ test("performs exact barcode lookup without losing leading zeroes", async () => 
   const matches = payload.data.matches as Array<Record<string, unknown>>;
   assertRecord(matches[0]);
   assertRecord(matches[0].variant);
+  assertRecord(matches[0].product);
+  assert.equal(matches[0].product.featuredImage.url,
+    "https://cdn.shopify.com/s/files/blue-shirt.jpg");
   assert.equal(
     matches[0].variant.barcode,
     "0012345678905",
@@ -590,6 +646,8 @@ test("looks up a product and returns exact inventory quantities by location", as
   assertProductSchema(payload.data);
 
   const product = payload.data;
+  assert.equal(product.description, "A blue shirt for summer.");
+  assert.equal((product.images as unknown[]).length, 1);
   const variants = product.variants as Array<Record<string, unknown>>;
   assert.equal(variants[0].price, "19.9500");
   assert.equal(variants[1].sku, null);
@@ -649,7 +707,11 @@ test("looks up a product and returns exact inventory quantities by location", as
   ]);
   assert.deepEqual(observations.at(-1), {
     operation: "GetProductById",
-    variables: {id: "gid://shopify/Product/100"},
+    variables: {
+      id: "gid://shopify/Product/100",
+      mediaFirst: 10,
+      mediaAfter: null,
+    },
   });
 });
 

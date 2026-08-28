@@ -325,6 +325,12 @@ test("exact SAMF180 lookup retries a transient Shopify failure and returns inven
                 status: "ACTIVE",
                 vendor: "Acme",
                 productType: "Parts",
+                description: "Example part",
+                descriptionHtml: "<p>Example part</p>",
+                media: {
+                  nodes: [],
+                  pageInfo: {hasNextPage: false, endCursor: null},
+                },
               },
             }],
             pageInfo: {hasNextPage: false},

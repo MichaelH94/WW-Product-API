@@ -55,9 +55,8 @@ paths:
       summary: Search products
       description: >-
         Find products by title or free text, vendor, product type, or combined
-        filters. Use the exact SKU or barcode operation when known. Pass
-        pageInfo.endCursor unchanged as after for another page, then use a
-        returned ID for product details or variant inventory.
+        filters. Returns a short description preview and one primary image, but
+        no inventory or full media collection. Use exact SKU/barcode when known.
       parameters:
         - name: q
           in: query
@@ -133,9 +132,8 @@ paths:
       summary: Find variants by SKU
       description: >-
         Use when an exact SKU is known. Returns product and variant details
-        with inventory quantities by location in one call. Inspect state before
-        using matches: product_not_found means none, and ambiguous means the SKU
-        matched multiple variants.
+        with inventory by location, full descriptions, and up to five product
+        images in one call. Inspect state; ambiguous means multiple matches.
       parameters:
         - name: sku
           in: path
@@ -173,9 +171,8 @@ paths:
       summary: Find variants by barcode
       description: >-
         Use when an exact barcode is known. Preserve leading zeroes. Returns
-        product and variant details with inventory by location in one call.
-        Inspect state before using matches: product_not_found means none, and
-        ambiguous means multiple variants matched.
+        inventory by location, full descriptions, and up to five product images
+        in one call. Inspect state; ambiguous means multiple matches.
       parameters:
         - name: barcode
           in: path
@@ -274,8 +271,8 @@ paths:
       summary: Get one product by ID
       description: >-
         Use only when a product ID is known from search, SKU lookup, or barcode
-        lookup. Returns product details, variants, selected options, prices,
-        inventory, and locations. Do not use for title, SKU, or barcode search.
+        lookup. Returns full descriptions and up to 10 ordered product images,
+        plus variants and inventory. Use imageAfter to page through more images.
       parameters:
         - name: id
           in: path
@@ -285,6 +282,24 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
+        - name: imageLimit
+          in: query
+          required: false
+          description: Product images to return on this page. Defaults to 10; maximum 10.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10
+            default: 10
+        - name: imageAfter
+          in: query
+          required: false
+          description: Opaque imagesPageInfo.endCursor from the prior product-detail response.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 1024
+            pattern: '^[A-Za-z0-9+/_=-]+$'
       responses:
         '200':
           description: The requested product.
@@ -480,6 +495,28 @@ components:
           type: string
         value:
           description: Parsed Shopify metafield JSON value. Its type depends on the metafield definition.
+    ProductImage:
+      type: object
+      additionalProperties: false
+      required: [mediaId, url, altText, width, height]
+      properties:
+        mediaId:
+          type: string
+          description: Shopify MediaImage GID.
+        url:
+          type: string
+          format: uri
+          pattern: '^https://'
+          description: Direct HTTPS Shopify image URL; return it without modification.
+        altText:
+          type: [string, 'null']
+          description: Shopify image alt text, or null when absent.
+        width:
+          type: [integer, 'null']
+          minimum: 0
+        height:
+          type: [integer, 'null']
+          minimum: 0
     Product:
       type: object
       additionalProperties: false
@@ -491,6 +528,11 @@ components:
         - vendor
         - productType
         - tags
+        - description
+        - descriptionHtml
+        - featuredImage
+        - images
+        - imagesPageInfo
         - variants
         - variantsPageInfo
         - metafields
@@ -512,6 +554,25 @@ components:
           type: array
           items:
             type: string
+        description:
+          type: string
+          description: Complete plain-text Shopify product description; empty string when absent.
+        descriptionHtml:
+          type: string
+          description: Complete original formatted Shopify product description HTML.
+        featuredImage:
+          description: First image in Shopify media order, or null when no image exists.
+          anyOf:
+            - $ref: '#/components/schemas/ProductImage'
+            - type: 'null'
+        images:
+          type: array
+          maxItems: 10
+          description: Image media only, in Shopify media position order.
+          items:
+            $ref: '#/components/schemas/ProductImage'
+        imagesPageInfo:
+          $ref: '#/components/schemas/PageInfo'
         variants:
           type: array
           items:
@@ -536,7 +597,9 @@ components:
     ExactLookupProduct:
       type: object
       additionalProperties: false
-      required: [id, title, status, vendor, productType]
+      required:
+        [id, title, status, vendor, productType, description, descriptionHtml,
+         featuredImage, images, imagesPageInfo]
       properties:
         id:
           type: string
@@ -549,6 +612,24 @@ components:
           type: string
         productType:
           type: string
+        description:
+          type: string
+          description: Complete plain-text Shopify product description; never truncated.
+        descriptionHtml:
+          type: string
+          description: Complete formatted Shopify product description HTML.
+        featuredImage:
+          anyOf:
+            - $ref: '#/components/schemas/ProductImage'
+            - type: 'null'
+        images:
+          type: array
+          maxItems: 5
+          description: Up to five image media items in Shopify position order.
+          items:
+            $ref: '#/components/schemas/ProductImage'
+        imagesPageInfo:
+          $ref: '#/components/schemas/PageInfo'
     ExactLookupLocation:
       type: object
       additionalProperties: false
@@ -656,6 +737,56 @@ components:
           maxItems: 2
           items:
             $ref: '#/components/schemas/ExactVariantLookupMatch'
+    ProductSearchItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title
+        - handle
+        - status
+        - vendor
+        - productType
+        - tags
+        - descriptionPreview
+        - featuredImage
+        - variants
+        - variantsPageInfo
+      properties:
+        id:
+          type: string
+          description: Shopify Product GID retained for product-detail lookup.
+        title:
+          type: string
+        handle:
+          type: string
+        status:
+          type: string
+        vendor:
+          type: string
+        productType:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        descriptionPreview:
+          type: string
+          maxLength: 320
+          description: Plain-text preview; use product detail for the complete description.
+        featuredImage:
+          description: One primary image, or null when the product has no image.
+          anyOf:
+            - $ref: '#/components/schemas/ProductImage'
+            - type: 'null'
+        variants:
+          type: array
+          maxItems: 3
+          description: Bounded variant identifiers; inventory levels are omitted from search.
+          items:
+            $ref: '#/components/schemas/ProductVariant'
+        variantsPageInfo:
+          $ref: '#/components/schemas/PageInfo'
     ProductSearchResult:
       type: object
       additionalProperties: false
@@ -664,7 +795,7 @@ components:
         products:
           type: array
           items:
-            $ref: '#/components/schemas/Product'
+            $ref: '#/components/schemas/ProductSearchItem'
         pageInfo:
           $ref: '#/components/schemas/PageInfo'
     HealthData:

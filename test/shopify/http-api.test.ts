@@ -26,6 +26,11 @@ function product(id = "gid://shopify/Product/1") {
     vendor: "Acme",
     productType: "Shirts",
     tags: ["blue"],
+    description: "Blue shirt",
+    descriptionHtml: "<p>Blue shirt</p>",
+    featuredImage: null,
+    images: [],
+    imagesPageInfo: {hasNextPage: false, endCursor: null},
     variants: [],
     variantsPageInfo: {hasNextPage: false, endCursor: null},
     metafields: [],
@@ -199,6 +204,37 @@ test("routes normalized SKU, barcode, and product IDs", async () => {
     assert.equal(response.status, 200);
   }
   assert.deepEqual(calls, ["sku:SKU-001", "barcode:0123456789012", "id:123"]);
+});
+
+test("routes bounded product image pagination", async () => {
+  const calls: unknown[] = [];
+  const access = dataAccess({
+    getProductById: async (id, options) => {
+      calls.push({id, options});
+      return product();
+    },
+  });
+  const found = await handleApiRequest(
+    request("/api/products/123?imageLimit=5&imageAfter=imageCursor"),
+    {dataAccess: access, internalApiKey: API_KEY},
+  );
+  assert.equal(found.status, 200);
+  assert.deepEqual(calls, [{
+    id: "123",
+    options: {mediaFirst: 5, mediaAfter: "imageCursor"},
+  }]);
+
+  for (const path of [
+    "/api/products/123?imageLimit=0",
+    "/api/products/123?imageLimit=11",
+    "/api/products/123?imageAfter=not%20a%20cursor",
+  ]) {
+    const invalid = await handleApiRequest(request(path), {
+      dataAccess: access,
+      internalApiKey: API_KEY,
+    });
+    assert.equal(invalid.status, 400, path);
+  }
 });
 
 test("routes paginated variant inventory and distinguishes not found", async () => {

@@ -32,7 +32,11 @@ export interface ProductApiDataAccess {
   ): Promise<ExactVariantLookupResult>;
   getProductById(
     id: string,
-    options?: {metafields?: ReadonlyArray<{namespace: string; key: string}>},
+    options?: {
+      metafields?: ReadonlyArray<{namespace: string; key: string}>;
+      mediaFirst?: number;
+      mediaAfter?: string;
+    },
     context?: ShopifyRequestContext,
   ): Promise<Product | null>;
   getInventoryForVariant(
@@ -144,7 +148,19 @@ function inventoryLimit(value: string | null): number {
   return parsed;
 }
 
-function cursor(value: string | null): string | undefined {
+function imageLimit(value: string | null): number {
+  if (value === null) return 10;
+  if (!/^\d+$/.test(value)) {
+    throw new ApiRequestError(400, "INVALID_INPUT", "imageLimit must be an integer");
+  }
+  const parsed = Number(value);
+  if (parsed < 1 || parsed > 10) {
+    throw new ApiRequestError(400, "INVALID_INPUT", "imageLimit must be between 1 and 10");
+  }
+  return parsed;
+}
+
+function cursor(value: string | null, name = "after"): string | undefined {
   if (value === null) return undefined;
   const normalized = value.trim();
   if (
@@ -155,7 +171,7 @@ function cursor(value: string | null): string | undefined {
     throw new ApiRequestError(
       400,
       "INVALID_INPUT",
-      "after must be a valid Shopify pagination cursor of 1024 characters or fewer",
+      `${name} must be a valid Shopify pagination cursor of 1024 characters or fewer`,
     );
   }
   return normalized;
@@ -291,10 +307,15 @@ export async function handleApiRequest(
 
     const productMatch = /^\/api\/products\/([^/]+)$/.exec(url.pathname);
     if (productMatch) {
-      assertQueryParameters(url, new Set());
+      const allowed = new Set(["imageLimit", "imageAfter"]);
+      assertQueryParameters(url, allowed);
+      const imageAfter = cursor(url.searchParams.get("imageAfter"), "imageAfter");
       const product = await options.dataAccess.getProductById(
         pathValue(productMatch[1], "id", 100),
-        {},
+        {
+          mediaFirst: imageLimit(url.searchParams.get("imageLimit")),
+          ...(imageAfter === undefined ? {} : {mediaAfter: imageAfter}),
+        },
         requestContext,
       );
       if (!product) {

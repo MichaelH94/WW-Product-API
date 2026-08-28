@@ -53,6 +53,10 @@ search filter is required. `limit` defaults to 10 and has a maximum of 50.
 Pass the opaque `pageInfo.endCursor` returned by Shopify as `after` to request
 the next page; malformed and duplicate cursors are rejected.
 
+Each match includes a plain-text `descriptionPreview` capped at 320 characters
+and at most one primary `featuredImage`. Full HTML, image collections, and
+inventory levels are deliberately omitted from broad search.
+
 Example: `/api/products/search?q=blue%20shirt&vendor=Acme&limit=10`
 
 ### `GET /api/products/by-sku/:sku`
@@ -60,6 +64,8 @@ Example: `/api/products/search?q=blue%20shirt&vendor=Acme&limit=10`
 Performs one narrowly bounded Shopify `productVariants` query for the exact SKU
 and returns product details, variant details, inventory tracking, and exact
 `available`, `on_hand`, and `incoming` quantities for up to 20 locations.
+The same operation includes the full plain-text and HTML descriptions plus up
+to five image-media items in Shopify position order.
 The result includes `state`, `matchCount`, `hasAdditionalMatches`, and `matches`.
 If multiple variants match, `state` is `ambiguous`; callers must use the
 returned product and variant IDs to distinguish them rather than choosing one.
@@ -73,7 +79,11 @@ barcodes return `state: ambiguous` with distinguishing identifiers.
 ### `GET /api/products/:id`
 
 Accepts a numeric product ID or URL-encoded Shopify Product GID. Returns 404
-when the product doesn't exist.
+when the product doesn't exist. It returns the full descriptions and up to 10
+image-media items. Use `imageLimit` (maximum 10) and pass
+`imagesPageInfo.endCursor` unchanged as `imageAfter` for another image page.
+Image URLs are direct HTTPS Shopify CDN URLs; `featuredImage` is null and
+`images` is empty when no product image exists.
 
 ### `GET /api/variants/:id/inventory`
 
